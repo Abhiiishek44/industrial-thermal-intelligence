@@ -1,0 +1,75 @@
+<!-- ══════════════════════════════════════════════════════════
+     VIEW 2 · EVENT (left panel + full map + bottom dash)
+══════════════════════════════════════════════════════════ -->
+<div id="event-view" class="hidden">
+
+  <!-- Full-screen loading overlay shown while event data is loading -->
+  <div id="event-loading-overlay" class="hidden">
+    <div class="event-loading-box">
+      <div class="spinner"></div>
+      <div id="event-loading-label">Loading event…</div>
+    </div>
+  </div>
+
+  <div id="event-body">
+
+    <!-- Left panel -->
+    <aside id="left-panel">
+      <div class="lp-header">
+        <div class="lp-event-name" id="lp-event-name">—</div>
+        <div class="lp-event-meta" id="lp-event-meta"></div>
+      </div>
+
+      <div class="lp-section-title">Timestep Replay</div>
+      <div id="timestep-slider-section">
+        <div class="empty-msg">Loading…</div>
+      </div>
+
+      <div class="lp-section-title" id="fcast-section-title" style="display:none">Forecast Horizon</div>
+      <div id="fcast-section" style="display:none">
+        <div class="fcast-wrap">
+          <div class="fcast-top-row">
+            <span id="fcast-badge" class="fcast-badge now">NOW</span>
+            <span id="fcast-h-label" class="fcast-h-label">+0h</span>
+          </div>
+          <input type="range" id="fcast-slider" min="0" max="12" value="0" step="1">
+          <div class="fcast-tick-row">
+            <span>0</span><span>+3h</span><span>+6h</span><span>+12h</span>
+          </div>
+          <div id="fcast-weather" class="fcast-weather">
+            <span style="opacity:.4;font-size:10px">Loading…</span>
+          </div>
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- Map (full remaining width) -->
+    <div id="event-map-wrap">
+      <div id="event-map"></div>
+      <!-- Floating legend (top-left of map) -->
+      <div id="event-legend">
+        <div class="leg-row"><span class="leg-swatch" style="background:#cc2200;opacity:.7"></span>Fire perimeter</div>
+        <div class="leg-row"><span class="leg-swatch" style="background:#ff2222;opacity:.7"></span>High risk zone</div>
+        <div class="leg-row"><span class="leg-line" style="background:#cc0000"></span>Burned road</div>
+        <div class="leg-row"><span class="leg-line" style="background:#ff8c00"></span>At-risk road</div>
+        <div class="leg-row"><span class="leg-line" style="background:#44dd44"></span>Clear road</div>
+      </div>
+    </div>
+
+  </div><!-- /event-body -->
+
+  <!-- Bottom dashboard -->
+  <div id="bottom-panel">
+    <div id="bottom-header">
+      <button id="dash-collapse-btn" class="dash-collapse-btn" title="Collapse dashboard">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <span class="bottom-title">Situation Dashboard</span>
+    </div>
+    <div id="dashboard-content">
+      <div class="dash-empty">Select a timestep to view data</div>
+    </div>
+  </div>
+
+</div><!-- /event-view -->
