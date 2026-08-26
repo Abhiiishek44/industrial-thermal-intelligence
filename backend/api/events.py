@@ -6,7 +6,7 @@ from flask import Blueprint, jsonify, request
 from geoalchemy2.shape import to_shape
 from shapely.geometry import mapping
 from db.models import FireEvent
-from utils.auth_middleware import token_required
+from utils.auth_middleware import admin_required, token_required
 
 # In-memory shared replay clock: {event_id: {ms, pushed_at, speed}}
 _replay_times: dict[int, dict] = {}
@@ -114,21 +114,9 @@ def get_replay_time(event_id: int):
 
 
 @events_bp.route('/<int:event_id>/replay-time', methods=['POST'])
-@token_required
+@admin_required
 def set_replay_time(event_id: int):
     """Admin only — set the shared virtual time for this event."""
-    import jwt as _jwt
-    import os
-    auth = request.headers.get('Authorization', '')
-    try:
-        payload = _jwt.decode(auth.split(' ')[1],
-                              os.getenv('SECRET_KEY', 'wildfire-secret-key-change-in-production'),
-                              algorithms=['HS256'])
-        if not payload.get('is_admin'):
-            return jsonify({'error': 'admin only'}), 403
-    except Exception:
-        return jsonify({'error': 'unauthorized'}), 401
-
     import time as _time
     data = request.get_json(force=True) or {}
     ms = data.get('ms')

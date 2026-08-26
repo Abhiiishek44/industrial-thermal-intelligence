@@ -1,51 +1,80 @@
-from flask import request, jsonify
-import jwt
+"""Bearer access-token authentication decorators."""
+
+from __future__ import annotations
+
 import os
 from functools import wraps
 
-SECRET_KEY = os.getenv('SECRET_KEY', 'wildfire-secret-key-change-in-production')
+import jwt
+from flask import jsonify, request
+
+from db.connection import db
+from db.models import User
 
 
-def _decode_token():
-    """Return (payload, error_response). One of them is None."""
-    auth_header = request.headers.get('Authorization', '')
-    if auth_header.startswith('Bearer '):
-        token = auth_header.split(' ')[1]
-    elif request.args.get('token'):
-        token = request.args.get('token')
-    else:
-        return None, (jsonify({'message': 'Token missing.'}), 401)
+_JWT_ALGORITHM = "HS256"
+
+
+def _jwt_secret() -> str:
+    secret = os.getenv("JWT_SECRET_KEY", "")
+    if not secret:
+        raise RuntimeError("JWT_SECRET_KEY must be configured.")
+    return secret
+
+
+def _decode_access_token():
+    auth_header = request.headers.get("Authorization", "")
+    scheme, separator, token = auth_header.partition(" ")
+    if not separator or scheme.lower() != "bearer" or not token.strip():
+        return None, (jsonify({"message": "Access token missing."}), 401)
+
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
-        return payload, None
+        payload = jwt.decode(
+            token.strip(),
+            _jwt_secret(),
+            algorithms=[_JWT_ALGORITHM],
+            options={"require": ["sub", "type", "jti", "iat", "exp"]},
+        )
     except jwt.ExpiredSignatureError:
-        return None, (jsonify({'message': 'Token expired. Please log in again.'}), 401)
+        return None, (jsonify({"message": "Access token expired."}), 401)
     except jwt.InvalidTokenError:
-        return None, (jsonify({'message': 'Invalid token.'}), 401)
+        return None, (jsonify({"message": "Invalid access token."}), 401)
+
+    if payload.get("type") != "access":
+        return None, (jsonify({"message": "Invalid access token."}), 401)
+    try:
+        user_id = int(payload["sub"])
+    except (TypeError, ValueError):
+        return None, (jsonify({"message": "Invalid access token."}), 401)
+
+    user = db.session.get(User, user_id)
+    if not user:
+        return None, (jsonify({"message": "User no longer exists."}), 401)
+    return user, None
 
 
-def token_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        payload, err = _decode_token()
-        if err:
-            return err
-        request.current_user = payload
-        request._jwt_user_id = payload.get('user_id')
-        return f(*args, **kwargs)
-    return decorated
+def _authenticated(admin_only: bool = False):
+    def decorator(function):
+        @wraps(function)
+        def decorated(*args, **kwargs):
+            user, error = _decode_access_token()
+            if error:
+                return error
+            if admin_only and not user.is_admin:
+                return jsonify({"message": "Admin access required."}), 403
+            request.current_user = {
+                "user_id": user.id,
+                "username": user.username,
+                "is_admin": bool(user.is_admin),
+            }
+            request.auth_user = user
+            request._jwt_user_id = user.id
+            return function(*args, **kwargs)
+
+        return decorated
+
+    return decorator
 
 
-def admin_required(f):
-    """Like token_required, but also enforces is_admin == True."""
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        payload, err = _decode_token()
-        if err:
-            return err
-        if not payload.get('is_admin'):
-            return jsonify({'message': 'Admin access required.'}), 403
-        request.current_user = payload
-        request._jwt_user_id = payload.get('user_id')
-        return f(*args, **kwargs)
-    return decorated
+token_required = _authenticated()
+admin_required = _authenticated(admin_only=True)

@@ -4,39 +4,101 @@
  */
 (function() {
   const API_BASE = window.location.origin;
+  const ACCESS_TOKEN_KEY = 'wf_access_token';
+  const REFRESH_TOKEN_KEY = 'wf_refresh_token';
+  let refreshPromise = null;
 
-  function _headers() {
-    const token = localStorage.getItem('wf_token');
-    const h = { 'Content-Type': 'application/json' };
-    if (token) h['Authorization'] = 'Bearer ' + token;
-    return h;
+  function _storeSession(data) {
+    localStorage.setItem(ACCESS_TOKEN_KEY, data.access_token);
+    localStorage.setItem(REFRESH_TOKEN_KEY, data.refresh_token);
+    return data;
   }
 
-  async function apiFetch(path, opts = {}) {
-    const res = await fetch(API_BASE + path, { headers: _headers(), ...opts });
+  function _clearSession() {
+    localStorage.removeItem(ACCESS_TOKEN_KEY);
+    localStorage.removeItem(REFRESH_TOKEN_KEY);
+  }
+
+  async function _jsonRequest(path, body) {
+    const res = await fetch(API_BASE + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || 'HTTP ' + res.status);
+      throw new Error(err.message || err.error || 'HTTP ' + res.status);
     }
-    return res.json();
+    return res.status === 204 ? null : res.json();
+  }
+
+  async function _refreshSession() {
+    if (refreshPromise) return refreshPromise;
+    const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
+    if (!refreshToken) throw new Error('Session expired. Please sign in again.');
+
+    refreshPromise = _jsonRequest('/auth/refresh', { refresh_token: refreshToken })
+      .then(_storeSession)
+      .catch(function(error) {
+        _clearSession();
+        throw error;
+      })
+      .finally(function() { refreshPromise = null; });
+    return refreshPromise;
+  }
+
+  async function _fetchWithAuth(path, opts, canRetry) {
+    opts = opts || {};
+    const headers = new Headers(opts.headers || {});
+    const accessToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+    if (accessToken) headers.set('Authorization', 'Bearer ' + accessToken);
+    if (opts.body && !(opts.body instanceof FormData) && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
+    }
+    const requestOpts = Object.assign({}, opts, { headers: headers });
+    const res = await fetch(API_BASE + path, requestOpts);
+    if (res.status === 401 && canRetry !== false && localStorage.getItem(REFRESH_TOKEN_KEY)) {
+      await _refreshSession();
+      return _fetchWithAuth(path, opts, false);
+    }
+    return res;
+  }
+
+  async function apiFetch(path, opts) {
+    const res = await _fetchWithAuth(path, opts, true);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.message || err.error || 'HTTP ' + res.status);
+    }
+    return res.status === 204 ? null : res.json();
   }
 
   window.API = {
     BASE: API_BASE,
 
-    githubLoginUrl() { return API_BASE + '/api/auth/github/login'; },
-
-    captureTokenFromHash() {
-      const m = window.location.hash.match(/[#&]token=([^&]+)/);
-      if (!m) return null;
-      const token = decodeURIComponent(m[1]);
-      localStorage.setItem('wf_token', token);
-      history.replaceState(null, '', window.location.pathname + window.location.search);
-      return token;
+    async register(username, password, email) {
+      return _jsonRequest('/auth/register', {
+        username: username,
+        password: password,
+        email: email || undefined,
+      }).then(_storeSession);
     },
-
-    async verifyToken() { return apiFetch('/api/auth/verify'); },
-    logout() { localStorage.removeItem('wf_token'); },
+    async login(username, password) {
+      return _jsonRequest('/auth/login', { username: username, password: password })
+        .then(_storeSession);
+    },
+    async me() { return apiFetch('/auth/me'); },
+    async logout() {
+      const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
+      try {
+        if (refreshToken) await _jsonRequest('/auth/logout', { refresh_token: refreshToken });
+      } finally {
+        _clearSession();
+      }
+    },
+    hasSession() { return !!localStorage.getItem(REFRESH_TOKEN_KEY); },
+    getAccessToken() { return localStorage.getItem(ACCESS_TOKEN_KEY); },
+    authorizedFetch(path, opts) { return _fetchWithAuth(path, opts, true); },
 
     async getReplayTime(eid)     { return apiFetch('/api/events/' + eid + '/replay-time'); },
     async setReplayTime(eid, ms, speed) { return apiFetch('/api/events/' + eid + '/replay-time', { method: 'POST', body: JSON.stringify({ ms, speed: speed || 1 }) }); },
@@ -103,16 +165,14 @@ async generateReport(eid, tsid, force) {
     // Crowd intelligence
     async submitFieldReport(eid, dataOrFormData) {
       const isForm  = dataOrFormData instanceof FormData;
-      const token   = localStorage.getItem('wf_token');
       const headers = isForm ? {} : { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = 'Bearer ' + token;
-      const res = await fetch(API_BASE + '/api/events/' + eid + '/field-reports', {
+      const res = await _fetchWithAuth('/api/events/' + eid + '/field-reports', {
         method: 'POST', headers: headers,
         body: isForm ? dataOrFormData : JSON.stringify(dataOrFormData),
-      });
+      }, true);
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: res.statusText }));
-        throw new Error(err.error || 'HTTP ' + res.status);
+        throw new Error(err.message || err.error || 'HTTP ' + res.status);
       }
       return res.json();
     },
@@ -132,13 +192,13 @@ async generateReport(eid, tsid, force) {
 
     streamChat(eventId, payload, onChunk, onDone, onError) {
       const controller = new AbortController();
-      fetch(API_BASE + '/api/events/' + eventId + '/chat', {
-        method: 'POST', headers: _headers(),
+      _fetchWithAuth('/api/events/' + eventId + '/chat', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload), signal: controller.signal,
-      }).then(async res => {
+      }, true).then(async res => {
         if (!res.ok) {
           const e = await res.json().catch(() => ({ error: res.statusText }));
-          onError(e.error || 'HTTP ' + res.status);
+          onError(e.message || e.error || 'HTTP ' + res.status);
           return;
         }
         const reader = res.body.getReader();

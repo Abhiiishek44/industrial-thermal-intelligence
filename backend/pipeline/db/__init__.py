@@ -22,7 +22,7 @@ def setup_db(app) -> None:
     ensure_db()
     with app.app_context():
         _migrate_event_timesteps(db)
-        _migrate_users(db)        # must run before create_all (drops legacy table)
+        _migrate_users(db)        # must run before create_all (updates legacy auth schemas)
         db.create_all()
         _migrate_field_reports(db)
         _migrate_fire_events(db)
@@ -60,11 +60,11 @@ def _migrate_field_reports(db) -> None:
 
 
 def _migrate_users(db) -> None:
-    """Drop legacy users table if it has the old password-auth schema.
+    """Migrate prior credential or OAuth users without breaking report FKs.
 
-    The new schema uses GitHub OAuth (no password column). On a fresh deploy
-    `db.create_all()` builds the new table; on an old deploy we drop the legacy
-    one so it can be recreated with the new columns.
+    OAuth-only identities are retained under locked ``oauth_migrated_<id>``
+    usernames with unusable password hashes. This preserves authorship on
+    existing crowd data while removing all provider-specific columns.
     """
     from sqlalchemy import inspect, text
 
@@ -72,12 +72,65 @@ def _migrate_users(db) -> None:
     if "users" not in inspector.get_table_names():
         return
     existing = {col["name"] for col in inspector.get_columns("users")}
-    legacy = {"username", "password"}
-    if legacy & existing:
-        print("[db] users: legacy auth schema detected — dropping table")
-        with db.engine.connect() as conn:
-            conn.execute(text("DROP TABLE users CASCADE"))
-            conn.commit()
+    additions = {
+        "username": "VARCHAR(50)",
+        "password_hash": "VARCHAR(128)",
+        "email": "VARCHAR(255)",
+        "is_admin": "BOOLEAN NOT NULL DEFAULT FALSE",
+        "chat_count": "INTEGER NOT NULL DEFAULT 0",
+        "chat_count_date": "DATE",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+    }
+
+    print("[db] users: migrating authentication schema")
+    with db.engine.connect() as conn:
+        for column, definition in additions.items():
+            if column not in existing:
+                conn.execute(text(f"ALTER TABLE users ADD COLUMN {column} {definition}"))
+
+        if "password" in existing:
+            conn.execute(text(
+                "UPDATE users SET password_hash = CAST(password AS VARCHAR) "
+                "WHERE password_hash IS NULL"
+            ))
+        if "github_login" in existing:
+            conn.execute(text(
+                "UPDATE users SET username = 'oauth_migrated_' || id "
+                "WHERE username IS NULL"
+            ))
+
+        conn.execute(text(
+            "UPDATE users SET username = 'user_' || id WHERE username IS NULL"
+        ))
+        conn.execute(text(
+            "UPDATE users SET password_hash = '!' WHERE password_hash IS NULL"
+        ))
+        conn.execute(text("UPDATE users SET is_admin = FALSE WHERE is_admin IS NULL"))
+        conn.execute(text("ALTER TABLE users ALTER COLUMN username SET NOT NULL"))
+        conn.execute(text("ALTER TABLE users ALTER COLUMN password_hash SET NOT NULL"))
+        conn.execute(text(
+            "WITH ranked AS ("
+            "SELECT id, ROW_NUMBER() OVER (PARTITION BY LOWER(TRIM(email)) ORDER BY id) AS position "
+            "FROM users WHERE email IS NOT NULL"
+            ") UPDATE users SET email = NULL FROM ranked "
+            "WHERE users.id = ranked.id AND ranked.position > 1"
+        ))
+        conn.execute(text("UPDATE users SET email = LOWER(TRIM(email)) WHERE email IS NOT NULL"))
+        conn.execute(text("UPDATE users SET email = NULL WHERE email = ''"))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_username ON users (username)"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email) "
+            "WHERE email IS NOT NULL"
+        ))
+
+        for legacy_column in ("github_id", "github_login", "avatar_url", "password"):
+            if legacy_column in existing:
+                conn.execute(text(
+                    f"ALTER TABLE users DROP COLUMN {legacy_column} CASCADE"
+                ))
+        conn.commit()
 
 
 def _migrate_fire_events(db) -> None:

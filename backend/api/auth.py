@@ -1,156 +1,237 @@
-"""GitHub OAuth login.
+"""Credential authentication with short-lived access and rotating refresh JWTs."""
 
-Flow:
-  1. Frontend opens /api/auth/github/login → 302 to GitHub authorize page.
-  2. GitHub redirects user back to /api/auth/github/callback?code=...&state=...
-  3. We exchange the code for an access token, fetch the user profile,
-     upsert a row in `users`, and issue a JWT.
-  4. We redirect to FRONTEND_URL with the JWT in the URL fragment so the
-     frontend can pick it up and stash it in localStorage.
+from __future__ import annotations
 
-The legacy username/password endpoints are gone — there is no register or
-login form anymore. Admin status is derived at runtime from
-`github_login == ADMIN_GITHUB_LOGIN`.
-"""
+import hashlib
 import os
-import secrets
-from datetime import datetime, timedelta
-from urllib.parse import urlencode
+import re
+import uuid
+from datetime import datetime, timedelta, timezone
 
 import jwt
-import requests
-from flask import Blueprint, request, jsonify, redirect
+from flask import Blueprint, jsonify, request
+from sqlalchemy.exc import IntegrityError
 
 from db.connection import db
-from db.models import User
-
-auth_bp = Blueprint('auth', __name__)
-
-SECRET_KEY          = os.getenv('SECRET_KEY', 'wildfire-secret-key-change-in-production')
-GH_CLIENT_ID        = os.getenv('GITHUB_OAUTH_CLIENT_ID', '')
-GH_CLIENT_SECRET    = os.getenv('GITHUB_OAUTH_CLIENT_SECRET', '')
-ADMIN_GITHUB_LOGIN  = os.getenv('ADMIN_GITHUB_LOGIN', 'geo-raypan')
-FRONTEND_URL        = os.getenv('FRONTEND_URL', 'https://wildfire-ai.com')
-
-GH_AUTHORIZE_URL = 'https://github.com/login/oauth/authorize'
-GH_TOKEN_URL     = 'https://github.com/login/oauth/access_token'
-GH_USER_URL      = 'https://api.github.com/user'
-
-# In-memory CSRF state store. Single-process deploy is fine for this scale;
-# if we ever go multi-worker we'd swap this for Redis or a signed cookie.
-_oauth_states: set[str] = set()
+from db.models import RefreshToken, User
+from utils.auth_middleware import token_required
 
 
-def _is_admin(github_login: str) -> bool:
-    return github_login.lower() == ADMIN_GITHUB_LOGIN.lower()
+auth_bp = Blueprint("auth", __name__)
+
+_JWT_ALGORITHM = "HS256"
+_USERNAME_RE = re.compile(r"^[a-z0-9_-]{3,50}$")
+_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 
-def _issue_jwt(user: User) -> str:
-    return jwt.encode({
-        'user_id':      user.id,
-        'github_id':    user.github_id,
-        'github_login': user.github_login,
-        'avatar_url':   user.avatar_url,
-        'is_admin':     _is_admin(user.github_login),
-        'exp':          datetime.utcnow() + timedelta(hours=24),
-    }, SECRET_KEY, algorithm='HS256')
+def _jwt_secret() -> str:
+    secret = os.getenv("JWT_SECRET_KEY", "")
+    if not secret:
+        raise RuntimeError("JWT_SECRET_KEY must be configured.")
+    return secret
 
 
-@auth_bp.route('/github/login', methods=['GET'])
-def github_login():
-    if not GH_CLIENT_ID:
-        return jsonify({'message': 'GitHub OAuth not configured.'}), 500
-    state = secrets.token_urlsafe(24)
-    _oauth_states.add(state)
-    # Build callback from FRONTEND_URL so the scheme/host match GitHub's OAuth
-    # App registration even when Flask sits behind a TLS-terminating proxy
-    # (Cloudflare/Caddy) that strips https → http on the way to the origin.
-    redirect_uri = f"{FRONTEND_URL.rstrip('/')}/api/auth/github/callback"
-    params = {
-        'client_id':    GH_CLIENT_ID,
-        'redirect_uri': redirect_uri,
-        'scope':        'read:user user:email',
-        'state':        state,
-    }
-    return redirect(f"{GH_AUTHORIZE_URL}?{urlencode(params)}")
-
-
-@auth_bp.route('/github/callback', methods=['GET'])
-def github_callback():
-    code  = request.args.get('code')
-    state = request.args.get('state')
-    if not code or not state or state not in _oauth_states:
-        return jsonify({'message': 'Invalid OAuth callback.'}), 400
-    _oauth_states.discard(state)
-
-    # Exchange code for access token
-    token_resp = requests.post(
-        GH_TOKEN_URL,
-        headers={'Accept': 'application/json'},
-        data={
-            'client_id':     GH_CLIENT_ID,
-            'client_secret': GH_CLIENT_SECRET,
-            'code':          code,
-        },
-        timeout=10,
-    )
-    if not token_resp.ok:
-        return jsonify({'message': 'Failed to exchange code with GitHub.'}), 502
-    access_token = token_resp.json().get('access_token')
-    if not access_token:
-        return jsonify({'message': 'GitHub did not return an access token.'}), 502
-
-    # Fetch user profile
-    profile = requests.get(
-        GH_USER_URL,
-        headers={'Authorization': f'token {access_token}', 'Accept': 'application/json'},
-        timeout=10,
-    )
-    if not profile.ok:
-        return jsonify({'message': 'Failed to fetch GitHub profile.'}), 502
-    p = profile.json()
-
-    github_id    = p.get('id')
-    github_login = p.get('login')
-    if not github_id or not github_login:
-        return jsonify({'message': 'GitHub profile missing required fields.'}), 502
-
-    # Upsert user
-    user = User.query.filter_by(github_id=github_id).first()
-    if not user:
-        user = User(
-            github_id    = github_id,
-            github_login = github_login,
-            avatar_url   = p.get('avatar_url'),
-            email        = p.get('email'),
-        )
-        db.session.add(user)
-    else:
-        user.github_login = github_login
-        user.avatar_url   = p.get('avatar_url') or user.avatar_url
-        user.email        = p.get('email') or user.email
-    db.session.commit()
-
-    token = _issue_jwt(user)
-    # Hand the token back via URL fragment so it never hits server logs.
-    return redirect(f"{FRONTEND_URL}/#token={token}")
-
-
-@auth_bp.route('/verify', methods=['GET'])
-def verify():
-    auth_header = request.headers.get('Authorization', '')
-    if not auth_header.startswith('Bearer '):
-        return jsonify({'message': 'No token provided.'}), 401
-    token = auth_header.split(' ', 1)[1]
+def _positive_int_env(name: str, default: int) -> int:
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
-        return jsonify({
-            'valid':        True,
-            'github_login': payload.get('github_login'),
-            'avatar_url':   payload.get('avatar_url'),
-            'is_admin':     bool(payload.get('is_admin', False)),
-        }), 200
-    except jwt.ExpiredSignatureError:
-        return jsonify({'message': 'Token expired.'}), 401
+        value = int(os.getenv(name, str(default)))
+        return value if value > 0 else default
+    except ValueError:
+        return default
+
+
+def _access_lifetime() -> timedelta:
+    return timedelta(minutes=_positive_int_env("JWT_ACCESS_TOKEN_MINUTES", 15))
+
+
+def _refresh_lifetime() -> timedelta:
+    return timedelta(days=_positive_int_env("JWT_REFRESH_TOKEN_DAYS", 30))
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _serialize_user(user: User) -> dict:
+    return {
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "is_admin": bool(user.is_admin),
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+    }
+
+
+def _encode_token(user: User, token_type: str, lifetime: timedelta, jti: str) -> tuple[str, datetime]:
+    now = datetime.now(timezone.utc)
+    expires_at = now + lifetime
+    claims = {
+        "sub": str(user.id),
+        "type": token_type,
+        "jti": jti,
+        "iat": now,
+        "exp": expires_at,
+    }
+    if token_type == "access":
+        claims.update({"username": user.username, "is_admin": bool(user.is_admin)})
+    return jwt.encode(claims, _jwt_secret(), algorithm=_JWT_ALGORITHM), expires_at
+
+
+def _create_token_pair(user: User, family_id: str | None = None) -> tuple[dict, RefreshToken]:
+    access_token, _ = _encode_token(user, "access", _access_lifetime(), str(uuid.uuid4()))
+    refresh_jti = str(uuid.uuid4())
+    refresh_token, refresh_expires_at = _encode_token(
+        user, "refresh", _refresh_lifetime(), refresh_jti
+    )
+    record = RefreshToken(
+        user_id=user.id,
+        token_hash=_token_hash(refresh_token),
+        jti=refresh_jti,
+        family_id=family_id or str(uuid.uuid4()),
+        expires_at=refresh_expires_at,
+    )
+    db.session.add(record)
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "Bearer",
+        "access_expires_in": int(_access_lifetime().total_seconds()),
+        "user": _serialize_user(user),
+    }, record
+
+
+def _decode_refresh_token(token: str) -> dict | None:
+    try:
+        payload = jwt.decode(
+            token,
+            _jwt_secret(),
+            algorithms=[_JWT_ALGORITHM],
+            options={"require": ["sub", "type", "jti", "iat", "exp"]},
+        )
     except jwt.InvalidTokenError:
-        return jsonify({'message': 'Invalid token.'}), 401
+        return None
+    return payload if payload.get("type") == "refresh" else None
+
+
+def _credentials() -> tuple[str, str, str | None, str | None]:
+    data = request.get_json(silent=True) or {}
+    username = str(data.get("username", "")).strip().lower()
+    password = str(data.get("password", ""))
+    email_value = data.get("email")
+    email = str(email_value).strip().lower() if email_value else None
+
+    if not _USERNAME_RE.fullmatch(username):
+        return username, password, email, "Username must be 3-50 lowercase letters, numbers, '-' or '_'."
+    if len(password) < 8:
+        return username, password, email, "Password must be at least 8 characters."
+    if len(password.encode("utf-8")) > 72:
+        return username, password, email, "Password must be at most 72 UTF-8 bytes."
+    if email and (len(email) > 255 or not _EMAIL_RE.fullmatch(email)):
+        return username, password, email, "A valid email address is required."
+    return username, password, email, None
+
+
+@auth_bp.post("/register")
+def register():
+    username, password, email, validation_error = _credentials()
+    if validation_error:
+        return jsonify({"message": validation_error}), 400
+
+    if User.query.filter_by(username=username).first():
+        return jsonify({"message": "Username is already registered."}), 409
+    if email and User.query.filter_by(email=email).first():
+        return jsonify({"message": "Email is already registered."}), 409
+
+    user = User(username=username, email=email, is_admin=False)
+    user.set_password(password)
+    db.session.add(user)
+    try:
+        db.session.flush()
+        response, _ = _create_token_pair(user)
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"message": "Username or email is already registered."}), 409
+
+    return jsonify(response), 201
+
+
+@auth_bp.post("/login")
+def login():
+    data = request.get_json(silent=True) or {}
+    username = str(data.get("username", "")).strip().lower()
+    password = str(data.get("password", ""))
+    user = User.query.filter_by(username=username).first() if username else None
+
+    if not user or not user.check_password(password):
+        return jsonify({"message": "Invalid username or password."}), 401
+
+    response, _ = _create_token_pair(user)
+    db.session.commit()
+    return jsonify(response), 200
+
+
+@auth_bp.post("/refresh")
+def refresh():
+    data = request.get_json(silent=True) or {}
+    raw_token = str(data.get("refresh_token", ""))
+    payload = _decode_refresh_token(raw_token)
+    if not payload:
+        return jsonify({"message": "Invalid or expired refresh token."}), 401
+
+    record = (
+        RefreshToken.query.filter_by(token_hash=_token_hash(raw_token))
+        .with_for_update()
+        .first()
+    )
+    if not record or record.jti != payload.get("jti") or str(record.user_id) != payload.get("sub"):
+        return jsonify({"message": "Invalid or expired refresh token."}), 401
+
+    now = datetime.now(timezone.utc)
+    expires_at = record.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+    if record.revoked_at is not None:
+        RefreshToken.query.filter_by(family_id=record.family_id, revoked_at=None).update(
+            {"revoked_at": now}, synchronize_session=False
+        )
+        db.session.commit()
+        return jsonify({"message": "Refresh token reuse detected; session revoked."}), 401
+    if expires_at <= now:
+        record.revoked_at = now
+        db.session.commit()
+        return jsonify({"message": "Invalid or expired refresh token."}), 401
+
+    user = db.session.get(User, record.user_id)
+    if not user:
+        record.revoked_at = now
+        db.session.commit()
+        return jsonify({"message": "Invalid or expired refresh token."}), 401
+
+    record.revoked_at = now
+    response, replacement = _create_token_pair(user, family_id=record.family_id)
+    db.session.flush()
+    record.replaced_by_id = replacement.id
+    db.session.commit()
+    return jsonify(response), 200
+
+
+@auth_bp.post("/logout")
+def logout():
+    data = request.get_json(silent=True) or {}
+    raw_token = str(data.get("refresh_token", ""))
+    if raw_token:
+        record = RefreshToken.query.filter_by(token_hash=_token_hash(raw_token)).first()
+        if record:
+            now = datetime.now(timezone.utc)
+            RefreshToken.query.filter_by(family_id=record.family_id, revoked_at=None).update(
+                {"revoked_at": now}, synchronize_session=False
+            )
+            db.session.commit()
+    return "", 204
+
+
+@auth_bp.get("/me")
+@token_required
+def me():
+    return jsonify({"user": _serialize_user(request.auth_user)}), 200

@@ -27,7 +27,7 @@ timesteps_bp = Blueprint("timesteps", __name__)
 
 _DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 
-# Chat quota: 5 messages per GitHub user per UTC day. Counts persist in the
+# Chat quota: 5 messages per authenticated user per UTC day. Counts persist in the
 # users table so quota survives restarts and is per-user (not per-session).
 _CHAT_LIMIT = 5
 

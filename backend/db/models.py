@@ -1,17 +1,47 @@
 from db.connection import db
 from geoalchemy2 import Geometry
+import bcrypt
 
 
 class User(db.Model):
     __tablename__ = 'users'
     id              = db.Column(db.Integer, primary_key=True)
-    github_id       = db.Column(db.BigInteger, unique=True, nullable=False, index=True)
-    github_login    = db.Column(db.String(255), unique=True, nullable=False)
-    avatar_url      = db.Column(db.Text, nullable=True)
-    email           = db.Column(db.String(255), nullable=True)
+    username        = db.Column(db.String(50), unique=True, nullable=False, index=True)
+    password_hash   = db.Column(db.String(128), nullable=False)
+    email           = db.Column(db.String(255), unique=True, nullable=True, index=True)
+    is_admin        = db.Column(db.Boolean, nullable=False, default=False)
     chat_count      = db.Column(db.Integer, nullable=False, default=0)
     chat_count_date = db.Column(db.Date, nullable=True)
     created_at      = db.Column(db.DateTime, server_default=db.func.now())
+
+    def set_password(self, password: str) -> None:
+        self.password_hash = bcrypt.hashpw(
+            password.encode('utf-8'), bcrypt.gensalt()
+        ).decode('utf-8')
+
+    def check_password(self, password: str) -> bool:
+        try:
+            return bcrypt.checkpw(
+                password.encode('utf-8'), self.password_hash.encode('utf-8')
+            )
+        except (TypeError, ValueError):
+            # Migrated provider-only identities have a deliberately unusable hash.
+            return False
+
+
+class RefreshToken(db.Model):
+    __tablename__ = 'refresh_tokens'
+    id             = db.Column(db.Integer, primary_key=True)
+    user_id        = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    token_hash      = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    jti             = db.Column(db.String(36), unique=True, nullable=False)
+    family_id       = db.Column(db.String(36), nullable=False, index=True)
+    expires_at      = db.Column(db.DateTime(timezone=True), nullable=False, index=True)
+    revoked_at      = db.Column(db.DateTime(timezone=True), nullable=True)
+    replaced_by_id = db.Column(db.Integer, db.ForeignKey('refresh_tokens.id'), nullable=True)
+    created_at      = db.Column(db.DateTime(timezone=True), server_default=db.func.now())
+
+    user = db.relationship('User', backref=db.backref('refresh_tokens', lazy=True, cascade='all, delete-orphan'))
 
 
 class FireEvent(db.Model):

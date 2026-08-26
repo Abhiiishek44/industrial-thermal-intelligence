@@ -14,7 +14,7 @@ wildfire-decision-support/
 │   │
 │   ├── api/                      # API route blueprints
 │   │   ├── __init__.py
-│   │   ├── auth.py               # POST /api/auth/register, login, verify; is_admin in JWT + verify response
+│   │   ├── auth.py               # /auth register, login, refresh rotation, logout, and current user
 │   │   ├── config.py             # GET  /api/config — frontend feature flags
 │   │   ├── events.py             # GET  /api/events, /api/events/:id; GET/POST /events/:id/replay-time (shared virtual clock, persisted to fire_events.replay_ms)
 │   │   ├── firms.py              # GET  /api/firms/realtime, POST /api/firms/refresh
@@ -84,8 +84,8 @@ wildfire-decision-support/
 │   │   └── crowd_agent.py        # assess_photo_intensity() + generate_theme()
 │   │
 │   ├── db/
-│   │   ├── connection.py         # db, get_db_uri(), ensure_db(), seed_db() [seeds admin/admin with is_admin=True]
-│   │   └── models.py             # ORM: User (is_admin), FireEvent, EventTimestep,
+│   │   ├── connection.py         # db, get_db_uri(), ensure_db(), seed_db() [optional env-configured admin]
+│   │   └── models.py             # ORM: User, RefreshToken, FireEvent, EventTimestep,
 │   │                             #      FieldReport (like_count, flag_count), FieldReportComment (like_count),
 │   │                             #      Theme, ThemeComment
 │   │
@@ -97,7 +97,7 @@ wildfire-decision-support/
 │   │   └── routes.py             # POST /<event_id>/field-reports/simulate — persists reports + comments with backfilled created_at
 │   │
 │   └── utils/
-│       ├── auth_middleware.py    # JWT verification middleware; token_required + admin_required decorators
+│       ├── auth_middleware.py    # Access-JWT verification; token_required + admin_required decorators
 │       └── background.py        # run_in_background(fn, *args) — threading.Thread wrapper
 │
 │   # Startup sweep: _sweep_desynced_timesteps(app) in main.py resets "done"/"failed" status
@@ -205,9 +205,11 @@ wildfire-decision-support/
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/auth/register` | Register |
-| POST | `/api/auth/login` | Login → JWT |
-| GET  | `/api/auth/verify` | Verify token |
+| POST | `/auth/register` | Register → access + refresh tokens |
+| POST | `/auth/login` | Login → access + refresh tokens |
+| POST | `/auth/refresh` | Rotate refresh token |
+| POST | `/auth/logout` | Revoke refresh-token family |
+| GET  | `/auth/me` | Current authenticated user |
 | GET  | `/api/events` | List all fire events |
 | GET  | `/api/events/:id` | Event detail + bbox |
 | GET  | `/api/events/:id/replay-time` | Get shared virtual clock (ms) for this event |
@@ -257,8 +259,11 @@ event_timesteps    → id, event_id (FK),
                      (prediction_status / spatial_analysis_status / population counts
                       are stored as STATUS.json + population.json files, not DB columns)
 
-users              → id, username, password, is_admin (bool, default False), created_at
-                     [seed: admin/admin with is_admin=True]
+users              → id, username, password_hash, email, is_admin, chat quota, created_at
+                     [optional admin seed from ADMIN_USERNAME + ADMIN_PASSWORD]
+
+refresh_tokens     → id, user_id (FK), token_hash, jti, family_id, expires_at,
+                     revoked_at, replaced_by_id (rotation chain), created_at
 
 field_reports      → id, event_id (FK, nullable), user_id (FK, nullable),
                      post_type       ← 'fire_report' | 'info' | 'request_help' | 'offer_help'

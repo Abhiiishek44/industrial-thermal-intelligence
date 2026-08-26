@@ -111,7 +111,7 @@ AI Agents (on-demand)                                                         �
 | Weather | ERA5 via CDS API, VIIRS FIRMS |
 | AI | Anthropic Claude API (configurable to Gemini) |
 | Frontend | Vanilla JS, Leaflet.js, CSS custom properties |
-| Auth | JWT (PyJWT), bcrypt |
+| Auth | JWT access/refresh tokens (PyJWT), bcrypt |
 
 ---
 
@@ -137,9 +137,16 @@ pip install -r requirements.txt
 Copy `.env.example` to `.env` and fill in:
 
 ```env
-DATABASE_URL=postgresql://user:pass@localhost/wildfire
+DB_HOST=localhost
+DB_NAME=wildfire_db
+DB_USER=postgres
+DB_PASSWORD=your-database-password
 ANTHROPIC_API_KEY=sk-ant-...
-SECRET_KEY=your-jwt-secret
+JWT_SECRET_KEY=your-long-random-jwt-secret
+JWT_ACCESS_TOKEN_MINUTES=15
+JWT_REFRESH_TOKEN_DAYS=30
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=change-me-before-first-start
 ```
 
 ### Run
@@ -149,7 +156,8 @@ cd backend
 python main.py
 ```
 
-The server starts on `http://localhost:5000`. Default admin credentials: `admin` / `admin`.
+The server starts on `http://localhost:5000`. The admin account is seeded from
+`ADMIN_USERNAME` and `ADMIN_PASSWORD` on first startup.
 
 ---
 
@@ -172,7 +180,11 @@ See [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) for a detailed breakdown of eve
 Full OpenAPI 3.0 specification: [docs/api.yaml](docs/api.yaml)
 
 Key endpoint groups:
-- `POST /api/auth/login` — JWT authentication
+- `POST /auth/register` — create a credential account
+- `POST /auth/login` — receive access and refresh tokens
+- `POST /auth/refresh` — rotate a refresh token and receive a new token pair
+- `POST /auth/logout` — revoke the current refresh-token family
+- `GET /auth/me` — return the authenticated user
 - `GET /api/events` — list fire events
 - `GET /api/events/:id/timesteps/:ts_id/report` — generate AI situational report
 - `POST /api/events/:id/field-reports` — submit crowd field report

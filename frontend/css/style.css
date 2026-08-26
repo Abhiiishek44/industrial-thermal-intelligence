@@ -735,12 +735,25 @@ body.light #prediction-status-bar { background: rgba(255,255,255,.93); }
 }
 .auth-modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-size: 16px; font-weight: 700; }
 #auth-blurb { color: var(--text2); font-size: 12px; line-height: 1.5; margin-bottom: 14px; }
-.github-btn {
-  width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;
-  padding: 10px; border-radius: var(--radius); border: 1px solid var(--border);
-  background: #24292f; color: #fff; cursor: pointer; font-size: 13px; font-weight: 600;
+.auth-field { display: block; margin-bottom: 11px; color: var(--text2); font-size: 11px; }
+.auth-field > span { display: block; margin-bottom: 5px; }
+.auth-field small { color: var(--text3); }
+.auth-field input {
+  width: 100%; box-sizing: border-box; padding: 9px 10px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface2); color: var(--text); font: inherit; outline: none;
 }
-.github-btn:hover { background: #1c2026; }
+.auth-field input:focus { border-color: var(--accent); }
+.auth-submit-btn {
+  width: 100%; padding: 10px; border: 0; border-radius: var(--radius);
+  background: var(--accent); color: #fff; cursor: pointer; font-size: 13px; font-weight: 600;
+}
+.auth-submit-btn:hover { opacity: .88; }
+.auth-submit-btn:disabled { cursor: wait; opacity: .6; }
+.auth-mode-toggle {
+  width: 100%; margin-top: 10px; padding: 5px; border: 0; background: transparent;
+  color: var(--accent); cursor: pointer; font-size: 11px;
+}
 #auth-error { color: var(--danger); font-size: 11px; min-height: 14px; margin-top: 10px; }
 
 /* ── TOAST ──────────────────────────────────────────────────────────────────── */

@@ -1,25 +1,8 @@
 import config  # loads .env variables
-import logging
-import re
 from flask import Flask
 from flask_cors import CORS
 from pathlib import Path
 from db.connection import db, get_db_uri
-
-# ── Shorten JWT tokens in Werkzeug access logs ────────────────────────────────
-class _TruncateTokenFilter(logging.Filter):
-    _pat = re.compile(r'token=[A-Za-z0-9._-]{20,}')
-
-    def filter(self, record):
-        if record.args:
-            msg = record.getMessage()
-            short = self._pat.sub('token=***', msg)
-            if short != msg:
-                record.msg = short
-                record.args = ()
-        return True
-
-logging.getLogger('werkzeug').addFilter(_TruncateTokenFilter())
 
 BASE_DIR     = Path(__file__).resolve().parent
 FRONTEND_DIR = BASE_DIR.parent / "frontend"
@@ -39,7 +22,7 @@ def create_app():
     from api.config    import config_bp
     from api.crowd     import crowd_bp
 
-    app.register_blueprint(auth_bp,      url_prefix='/api/auth')
+    app.register_blueprint(auth_bp,      url_prefix='/auth')
     app.register_blueprint(events_bp,    url_prefix='/api/events')
     app.register_blueprint(timesteps_bp, url_prefix='/api')
     app.register_blueprint(firms_bp,     url_prefix='/api/firms')
