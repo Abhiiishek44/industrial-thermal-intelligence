@@ -1,0 +1,20 @@
+# Replace YOUR_DOMAIN with your actual domain (e.g. wildfire.yourdomain.com)
+# or the Droplet's public IP (e.g. http://1.2.3.4) for a quick test.
+#
+# Domain  → Caddy auto-obtains a Let's Encrypt certificate (HTTPS for free)
+# IP only → change to "http://1.2.3.4" to skip TLS
+
+YOUR_DOMAIN {
+    reverse_proxy backend:5000 {
+        # Support Server-Sent Events (streaming chat)
+        flush_interval -1
+    }
+
+    # Cache static assets at the edge
+    @static {
+        path *.js *.css *.png *.jpg *.ico *.woff2
+    }
+    header @static Cache-Control "public, max-age=86400"
+
+    encode gzip
+}
