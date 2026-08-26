@@ -1,0 +1,24 @@
+# Agent / local notes (never commit)
+AGENT/
+
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Downloaded static datasets (regenerate via: python pipeline.py download --all)
+data/static/*
+!data/static/osm/
+data/static/osm/*
+!data/static/osm/roads_canada.gpkg
+
+# Generated event data (regenerate via: python pipeline.py clip <event_id> --all)
+data/events/
+
+# Cache
+data/cache/
+data/scripts/cache/
+
+# Large geodata prep files
+data_prep/

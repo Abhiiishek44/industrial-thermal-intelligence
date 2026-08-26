@@ -1,0 +1,2 @@
+**/*.pkl filter=lfs diff=lfs merge=lfs -text
+data/static/osm/roads_canada.gpkg filter=lfs diff=lfs merge=lfs -text
