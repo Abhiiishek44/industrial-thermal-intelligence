@@ -21,13 +21,16 @@ Open `.env` and update the following:
 
 ```env
 # Admin account (seeded on first startup)
+ADMIN_USERNAME=admin
 ADMIN_PASSWORD=change-me-before-deploy
 
 # Flask Backend
 DB_NAME=wildfire_db
 DB_USER=postgres
 DB_PASSWORD=your_password        # change this
-SECRET_KEY=some_long_random_str  # always change for production
+JWT_SECRET_KEY=some_long_random_str  # always change for production
+JWT_ACCESS_TOKEN_MINUTES=15
+JWT_REFRESH_TOKEN_DAYS=30
 
 # PostgreSQL Container (must match DB_* above)
 POSTGRES_DB=wildfire_db
@@ -65,7 +68,7 @@ docker compose up --build
 
 On first startup Docker will:
 1. Download `postgis/postgis:16-3.4` and `python:3.11-slim` (~500 MB, requires internet)
-2. Run `init.sql` to create the database schema automatically
+2. Create the database schema automatically
 3. Seed the admin account using `ADMIN_PASSWORD` from `.env`
 
 When everything is ready you should see:

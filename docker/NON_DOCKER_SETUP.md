@@ -33,6 +33,7 @@ For local development, ensure `DB_HOST=localhost` in your `.env`:
 
 ```env
 # Admin account (seeded on first startup)
+ADMIN_USERNAME=admin
 ADMIN_PASSWORD=change-me
 
 # Flask Backend
@@ -41,7 +42,9 @@ DB_PORT=5432
 DB_NAME=wildfire_db
 DB_USER=postgres
 DB_PASSWORD=your_password
-SECRET_KEY=some_long_random_str
+JWT_SECRET_KEY=some_long_random_str
+JWT_ACCESS_TOKEN_MINUTES=15
+JWT_REFRESH_TOKEN_DAYS=30
 
 # PostgreSQL Container (not used locally, can be left as-is)
 POSTGRES_DB=wildfire_db
@@ -92,7 +95,7 @@ python main.py
 ```
 
 On startup, Flask will:
-1. Create all database tables via SQLAlchemy (PostGIS extension, `users`, `fire_events`, `event_timesteps`, `themes`, `field_reports`, `field_report_comments`, `theme_comments`)
+1. Create all database tables via SQLAlchemy (PostGIS extension, `users`, `refresh_tokens`, `fire_events`, `event_timesteps`, `themes`, `field_reports`, `field_report_comments`, `theme_comments`)
 2. Seed the admin account using `ADMIN_PASSWORD` from `.env`
 3. Start the pipeline in a background thread
 4. Serve at `http://localhost:5000`
