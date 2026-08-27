@@ -15,6 +15,7 @@ Simulate route → crowd_simulate.py (registered on crowd_bp at bottom).
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, request
@@ -25,6 +26,40 @@ from api.crowd_processing import bg_assess_and_cluster as _bg_assess_and_cluster
 crowd_bp = Blueprint("crowd", __name__)
 
 _UPLOAD_DIR = Path(__file__).resolve().parents[2] / "data" / "uploads"
+_POST_TYPES = {"fire_report", "info", "request_help", "offer_help"}
+
+
+def _parse_report_payload() -> tuple[str, str, float, float, datetime | None, object | None]:
+    is_multipart = "multipart" in (request.content_type or "")
+    source = request.form if is_multipart else (request.get_json(silent=True) or {})
+    post_type = str(source.get("post_type", "info")).strip()
+    description = str(source.get("description", "")).strip()
+    if post_type not in _POST_TYPES:
+        raise ValueError("invalid post_type")
+    if not description:
+        raise ValueError("description required")
+    try:
+        lat = float(source.get("lat"))
+        lon = float(source.get("lon"))
+    except (TypeError, ValueError):
+        raise ValueError("valid lat and lon required") from None
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        raise ValueError("lat or lon outside valid range")
+    observed_at = None
+    raw_observed_at = str(source.get("observed_at", "")).strip()
+    if raw_observed_at:
+        try:
+            observed_at = datetime.fromisoformat(raw_observed_at.replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            raise ValueError("invalid observed_at") from None
+    return (
+        post_type,
+        description,
+        lat,
+        lon,
+        observed_at,
+        request.files.get("photo") if is_multipart else None,
+    )
 
 
 def _extract_bearing(photo_path: Path) -> float | None:
@@ -49,23 +84,16 @@ def _extract_bearing(photo_path: Path) -> float | None:
 @token_required
 def submit_field_report(event_id: int):
     from db.connection import db
-    from db.models import FieldReport
+    from db.models import FieldReport, FireEvent
     from utils.background import run_in_background
 
-    is_multipart = "multipart" in (request.content_type or "")
-    if is_multipart:
-        post_type   = request.form.get("post_type", "info")
-        description = request.form.get("description", "")
-        lat         = float(request.form.get("lat", 0))
-        lon         = float(request.form.get("lon", 0))
-        photo_file  = request.files.get("photo")
-    else:
-        data        = request.get_json(force=True) or {}
-        post_type   = data.get("post_type", "info")
-        description = data.get("description", "")
-        lat         = float(data.get("lat", 0))
-        lon         = float(data.get("lon", 0))
-        photo_file  = None
+    try:
+        post_type, description, lat, lon, observed_at, photo_file = _parse_report_payload()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    if db.session.get(FireEvent, event_id) is None:
+        return jsonify({"error": "event not found"}), 404
 
     report = FieldReport(
         event_id    = event_id,
@@ -74,6 +102,7 @@ def submit_field_report(event_id: int):
         description = description,
         lat         = lat,
         lon         = lon,
+        created_at  = observed_at,
     )
     db.session.add(report)
     db.session.flush()
@@ -91,7 +120,15 @@ def submit_field_report(event_id: int):
     report.photo_path = photo_path
     db.session.commit()
 
-    return jsonify({"id": report.id, "bearing_available": bearing is not None}), 201
+    return jsonify({
+        "id": report.id,
+        "post_type": report.post_type,
+        "lat": report.lat,
+        "lon": report.lon,
+        "description": report.description,
+        "created_at": report.created_at.isoformat() if report.created_at else None,
+        "bearing_available": bearing is not None,
+    }), 201
 
 
 @crowd_bp.route("/<int:event_id>/field-reports", methods=["GET"])

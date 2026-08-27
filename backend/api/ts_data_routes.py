@@ -60,6 +60,13 @@ def get_weather(event_id: int, ts_id: int):
     event, ts = result
     path = _weather_dir(event.id, event.year, ts.slot_time) / "forecast.json"
     if not path.exists():
+        from pipeline.event_config import THERMAL_MONITORING_MODE, get_event_config
+
+        if get_event_config(event).analysis_mode == THERMAL_MONITORING_MODE:
+            from pipeline.weather import ensure_open_meteo_forecast
+
+            records = ensure_open_meteo_forecast(event, ts.slot_time, path.parent)
+            return jsonify(records), 200
         return jsonify([]), 200
     return Response(path.read_text(encoding="utf-8"), mimetype="application/json"), 200
 

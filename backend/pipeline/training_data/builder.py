@@ -74,10 +74,10 @@ def build_training_dataset(
             data_root / "events" / "2016_0001" / "data_raw" / "firms" / "hotspots_raw.csv",
             repository_root / "data" / "static" / "actual_perimeter" / "actual_perimeter.gpkg",
         ),
-        "chakan_2024_demo": (
-            data_root / "events" / "2024_0002" / "data_processed" / "thermal" / "firms_enriched.parquet",
-            data_root / "events" / "2024_0002" / "data_processed" / "industrial" / "metadata.json",
-            data_root / "events" / "2024_0002" / "data_processed" / "landcover" / "metadata.json",
+        "vijayanagar_2026_demo": (
+            data_root / "events" / "2026_0002" / "data_processed" / "thermal" / "firms_enriched.parquet",
+            data_root / "events" / "2026_0002" / "data_processed" / "industrial" / "metadata.json",
+            data_root / "events" / "2026_0002" / "data_processed" / "landcover" / "metadata.json",
         ),
     }
 
@@ -176,12 +176,12 @@ def build_training_dataset(
                 "osm_temporal_mismatch": "not used; context fields unavailable",
             },
             {
-                "region_id": "chakan_2024_demo",
-                "firms_source": "NASA FIRMS VIIRS SNPP/NOAA-20 event cache",
-                "industrial_sources": "MIDC Enterprise GIS and OpenStreetMap cache",
+                "region_id": "vijayanagar_2026_demo",
+                "firms_source": "NASA FIRMS VIIRS NOAA-20/NOAA-21 event cache",
+                "industrial_sources": "OpenStreetMap industrial areas and facilities cache",
                 "landcover_source": "ESA WorldCover 2021 v200 cache",
-                "worldcover_temporal_mismatch": "2021 land cover applied to 2024 observations",
-                "osm_temporal_mismatch": "current cache snapshot applied to 2024 observations",
+                "worldcover_temporal_mismatch": "2021 land cover applied to 2026 observations",
+                "osm_temporal_mismatch": "current cache snapshot applied to 2026 observations",
                 "fitting_status": "hard excluded",
             },
         ],

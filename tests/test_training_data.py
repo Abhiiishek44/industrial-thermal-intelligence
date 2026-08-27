@@ -112,10 +112,10 @@ class TrainingDataTests(unittest.TestCase):
         self.assertEqual(featured.at["c", "prior_detection_count_7d"], 2)
         self.assertAlmostEqual(featured.at["c", "prior_frp_mean_30d"], 3.0)
 
-    def test_chakan_is_hard_excluded(self):
-        chakan = next(region for region in TRAINING_REGIONS if region.region_id == "chakan_2024_demo")
-        self.assertTrue(chakan.exclude_from_model_fitting)
-        self.assertEqual(chakan.fixed_split, DatasetSplit.EXCLUDED)
+    def test_vijayanagar_is_hard_excluded_until_labeled(self):
+        region = next(region for region in TRAINING_REGIONS if region.region_id == "vijayanagar_2026_demo")
+        self.assertTrue(region.exclude_from_model_fitting)
+        self.assertEqual(region.fixed_split, DatasetSplit.EXCLUDED)
 
     def test_split_assignment_groups_regions_and_events(self):
         base = TRAINING_REGIONS[0]

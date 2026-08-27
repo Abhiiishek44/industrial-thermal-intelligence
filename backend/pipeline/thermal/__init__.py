@@ -13,6 +13,19 @@ from pipeline.thermal.context import (
     ensure_thermal_context,
     load_context_metadata,
 )
+from pipeline.thermal.persistence import (
+    aggregate_multisensor_observations,
+    build_persistent_sources,
+    ensure_persistence_analysis,
+    get_persistence_settings,
+    thermal_frame_to_geojson,
+)
+from pipeline.thermal.classification import (
+    classification_metadata,
+    classify_persistent_sources,
+    classify_source,
+    ensure_source_classification,
+)
 
 __all__ = [
     "collect_firms_history",
@@ -24,4 +37,13 @@ __all__ = [
     "enrich_thermal_history",
     "ensure_thermal_context",
     "load_context_metadata",
+    "aggregate_multisensor_observations",
+    "build_persistent_sources",
+    "ensure_persistence_analysis",
+    "get_persistence_settings",
+    "thermal_frame_to_geojson",
+    "classification_metadata",
+    "classify_persistent_sources",
+    "classify_source",
+    "ensure_source_classification",
 ]

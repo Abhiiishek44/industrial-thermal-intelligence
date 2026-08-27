@@ -84,13 +84,28 @@ def seed_db():
     added = []
     updated = []
     for config in EVENT_CONFIGS:
-        existing = FireEvent.query.filter_by(name=config.name).first()
+        existing = db.session.get(FireEvent, config.event_id)
+        if existing is None:
+            existing = FireEvent.query.filter_by(name=config.name).first()
         if existing is not None:
             configured_start = date.fromisoformat(config.start_date)
             configured_end = date.fromisoformat(config.end_date)
-            if existing.start_date != configured_start or existing.end_date != configured_end:
-                existing.start_date = configured_start
-                existing.end_date = configured_end
+            configured_bbox = WKTElement(config.bbox_wkt, srid=4326)
+            changed = (
+                existing.name != config.name
+                or existing.year != config.year
+                or existing.start_date != configured_start
+                or existing.end_date != configured_end
+                or existing.description != config.description
+            )
+            existing.name = config.name
+            existing.year = config.year
+            existing.bbox = configured_bbox
+            existing.start_date = configured_start
+            existing.end_date = configured_end
+            existing.description = config.description
+            if changed:
+                existing.replay_ms = None
                 updated.append(config.name)
             continue
         if db.session.get(FireEvent, config.event_id) is not None:
@@ -124,4 +139,4 @@ def seed_db():
     if added or updated:
         db.session.commit()
     if updated:
-        print(f"[db] updated replay window for {len(updated)} event(s): {', '.join(updated)}")
+        print(f"[db] synchronized {len(updated)} configured event(s): {', '.join(updated)}")

@@ -56,7 +56,20 @@ def get_hotspots(event_id: int, ts_id: int):
     event, ts = result
     crowd = request.args.get("crowd") == "true"
     fname = "hotspots_crowd.geojson" if crowd else "hotspots.geojson"
-    return jsonify(_read_geojson(_hotspot_dir(event.id, event.year, ts.slot_time) / fname)), 200
+    payload = _read_geojson(_hotspot_dir(event.id, event.year, ts.slot_time) / fname)
+    from pipeline.event_config import get_event_config
+
+    bbox = get_event_config(event).view_bbox
+    if bbox:
+        min_lon, min_lat, max_lon, max_lat = bbox
+        payload['features'] = [
+            feature for feature in payload.get('features', [])
+            if (feature.get('geometry') or {}).get('type') == 'Point'
+            and len((feature.get('geometry') or {}).get('coordinates') or []) >= 2
+            and min_lon <= feature['geometry']['coordinates'][0] <= max_lon
+            and min_lat <= feature['geometry']['coordinates'][1] <= max_lat
+        ]
+    return jsonify(payload), 200
 
 
 @timesteps_bp.route("/events/<int:event_id>/timesteps/<int:ts_id>/risk-zones", methods=["GET"])

@@ -63,6 +63,13 @@
     const landcover = thermal.landcover_group_counts || {};
     const confidence = thermal.confidence_counts || {};
     const industries = thermal.nearest_industries || [];
+    const viewLabel = thermal.view_mode === 'classification' ? 'Source Classification'
+      : thermal.view_mode === 'persistent' ? 'Persistent Sources'
+      : thermal.view_mode === '30d' ? '30-Day Activity'
+      : thermal.view_mode === '5d' ? '5-Day Activity'
+      : 'Observation Replay';
+    const classified = thermal.view_mode === 'classification';
+    const persistent = thermal.view_mode === 'persistent' || classified;
 
     const countList = function(values) {
       const entries = Object.keys(values).map(function(key) {
@@ -74,8 +81,11 @@
     el.innerHTML =
       '<div class="dash-card">' +
         '<div class="dash-card-title">Thermal detections</div>' +
+        '<div style="font-size:10px;color:var(--text2);margin-bottom:5px">' + viewLabel + '</div>' +
         '<table class="stat-table">' +
-          '<tr><td>Detections</td><td>' + v(thermal.detection_count != null ? thermal.detection_count : fire.n_hotspots, 0) + '</td></tr>' +
+          (persistent ? '<tr><td>Persistent sources</td><td>' + v(thermal.persistent_source_count, 0) + '</td></tr>' : '') +
+          '<tr><td>Aggregated detections</td><td>' + v(thermal.detection_count != null ? thermal.detection_count : fire.n_hotspots, 0) + '</td></tr>' +
+          '<tr><td>Raw observations</td><td>' + v(thermal.raw_observation_count != null ? thermal.raw_observation_count : thermal.detection_count, 0) + '</td></tr>' +
           '<tr><td>FRP total</td><td>' + v(fire.frp_sum, 2, 'MW') + '</td></tr>' +
           '<tr><td>FRP mean</td><td>' + v(thermal.frp_mean_mw, 2, 'MW') + '</td></tr>' +
           '<tr><td>FRP maximum</td><td>' + v(thermal.frp_max_mw, 2, 'MW') + '</td></tr>' +
@@ -83,11 +93,20 @@
         '</table>' +
       '</div>' +
 
+      (persistent ? '<div class="dash-card">' +
+        '<div class="dash-card-title">Persistence</div>' +
+        '<table class="stat-table">' +
+          '<tr><td>Levels</td><td>' + countList(thermal.persistence_level_counts || {}) + '</td></tr>' +
+          '<tr><td>Highest active days</td><td>' + v(thermal.highest_active_days, 0) + '</td></tr>' +
+          '<tr><td>Longest duration</td><td>' + v(thermal.longest_duration_days, 1, 'days') + '</td></tr>' +
+          '<tr><td>Highest night recurrence</td><td>' + v(thermal.highest_night_ratio != null ? thermal.highest_night_ratio * 100 : null, 0, '%') + '</td></tr>' +
+        '</table>' +
+      '</div>' : '') +
+
       '<div class="dash-card">' +
         '<div class="dash-card-title">Industrial context</div>' +
         '<table class="stat-table">' +
-          '<tr><td>Inside MIDC</td><td>' + vn(thermal.inside_midc_count) + '</td></tr>' +
-          '<tr><td>Industrial polygon</td><td>' + vn(thermal.inside_industrial_area_count) + '</td></tr>' +
+          '<tr><td>Inside industrial zone</td><td>' + vn(thermal.inside_industrial_area_count) + '</td></tr>' +
           '<tr><td>Near facility</td><td>' + vn(thermal.near_industrial_facility_count) + '</td></tr>' +
           '<tr><td>Nearest industry</td><td>' + text(industries.join(', ')) + '</td></tr>' +
         '</table>' +
@@ -104,10 +123,17 @@
 
       '<div class="dash-card">' +
         '<div class="dash-card-title">Source classification</div>' +
-        '<div style="font-size:12px;line-height:1.5">' +
-          '<b>Not classified</b><br>' +
-          '<span style="opacity:.65">The current dataset provides observed and enriched thermal anomalies. It does not yet have sufficient labels for an industrial-vs-vegetation classifier.</span>' +
-        '</div>' +
+        (classified
+          ? '<table class="stat-table">' +
+              '<tr><td>Classes</td><td>' + countList(thermal.classification_counts || {}) + '</td></tr>' +
+              '<tr><td>Mean confidence</td><td>' + v(thermal.classification_mean_confidence != null ? thermal.classification_mean_confidence * 100 : null, 0, '%') + '</td></tr>' +
+              '<tr><td>Method</td><td>Explainable rules v1</td></tr>' +
+            '</table>' +
+            '<div style="font-size:10px;opacity:.6;margin-top:5px">Rule-based baseline, not a trained ML model.</div>'
+          : '<div style="font-size:12px;line-height:1.5">' +
+              '<b>Open Source Classification view</b><br>' +
+              '<span style="opacity:.65">Persistent sources can be classified using industrial, persistence and land-cover evidence.</span>' +
+            '</div>') +
       '</div>' +
 
       '<div class="dash-card">' +
@@ -265,9 +291,15 @@
 
   // Called when weather/forecast.json arrives (async, after renderDashboard)
   function updateWeather(weatherForecast, _attempt) {
-    if (!weatherForecast || !weatherForecast.length) return;
     const sparkEl = document.getElementById('dash-wind-sparkline');
     const labsEl  = document.getElementById('dash-wind-labels');
+    const weatherEl = document.getElementById('fcast-weather');
+    if (!weatherForecast || !weatherForecast.length) {
+      if (weatherEl) weatherEl.innerHTML = '<span style="opacity:.55;font-size:10px">Weather unavailable</span>';
+      if (sparkEl) sparkEl.innerHTML = '<span style="opacity:.55;font-size:10px">Wind forecast unavailable</span>';
+      if (labsEl) labsEl.innerHTML = '';
+      return;
+    }
     if (!sparkEl || !labsEl) {
       if ((_attempt || 0) < 15) setTimeout(function() { updateWeather(weatherForecast, (_attempt || 0) + 1); }, 100);
       return;

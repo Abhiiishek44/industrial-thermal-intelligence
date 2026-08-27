@@ -28,16 +28,21 @@ _STATIC_FILES = {
 def prepare_all_events(app) -> None:
     """Download shared assets + build per-event data for all FireEvents."""
     log.info("[env] environment preparation started")
-    log.info("[env] checking shared assets")
-    _ensure_models()
-    _download_static_gpkg()
 
     with app.app_context():
         from db.models import FireEvent
-        events = FireEvent.query.all()
+        from pipeline.event_config import should_prepare_event, uses_wildfire_model
+
+        events = [event for event in FireEvent.query.all() if should_prepare_event(event)]
         if not events:
-            log.warning("[env] No FireEvents in DB")
+            log.warning("[env] no configured India monitoring events selected for preparation")
             return
+        if any(uses_wildfire_model(event) for event in events):
+            log.info("[env] checking shared wildfire assets")
+            _ensure_models()
+            _download_static_gpkg()
+        else:
+            log.info("[env] India monitoring catalog selected; wildfire-only assets skipped")
         for event in events:
             log.info("[env] event %d (%s) preparation started", event.id, event.name)
             try:
@@ -76,10 +81,15 @@ def _create_event_timesteps(event) -> None:
         )
         if not uses_wildfire_model(event):
             assets, predictor, threshold = _get_build_runtime(event)
-            for timestep in timesteps:
+            # Cumulative and persistence APIs read the complete derived
+            # artifacts directly. Pre-build only the latest replay output;
+            # older observations remain available for on-demand replay without
+            # multiplying thousands of files across every India region.
+            monitoring_timesteps = timesteps[-1:] if timesteps else []
+            for timestep in monitoring_timesteps:
                 _build_timestep(event, timestep, assets, predictor, threshold)
             log.info(
-                "[builder] event %d monitoring outputs pre-built for %d observation(s)",
+                "[builder] event %d latest monitoring output pre-built (%d available observation(s))",
                 event.id,
                 len(timesteps),
             )
@@ -125,14 +135,85 @@ def _prepare_event(event) -> None:
 
     study = _make_study(event)
 
-    print("[env] Fetching landmarks ...")
-    _fetch_landmarks(event, study)
+    if uses_wildfire_model(event):
+        print("[env] Fetching landmarks ...")
+        _fetch_landmarks(event, study)
+    else:
+        log.info("[env] event %d monitoring mode; landmark lookup skipped", event.id)
 
     print("[env] Pre-building roads cache ...")
     _prebuild_roads(event, study)
 
     print("[env] Pre-building population cache ...")
     _prebuild_population(event, study)
+
+    if not uses_wildfire_model(event):
+        from pipeline.thermal import (
+            ensure_persistence_analysis,
+            ensure_source_classification,
+            ensure_thermal_context,
+            ensure_thermal_history,
+        )
+
+        log.info("[env] event %d preparing historical thermal observations", event.id)
+        try:
+            ensure_thermal_history(event, study)
+        except Exception as exc:
+            log.exception(
+                "[env] event %d historical thermal preparation failed: %s",
+                event.id,
+                exc,
+            )
+
+        log.info("[env] event %d preparing industrial and land-cover context", event.id)
+        try:
+            ensure_thermal_context(event, study)
+        except Exception as exc:
+            log.exception(
+                "[env] event %d thermal context preparation failed: %s",
+                event.id,
+                exc,
+            )
+
+        log.info("[env] event %d building aggregation and persistence analytics", event.id)
+        try:
+            metadata = ensure_persistence_analysis(event, study)
+            log.info(
+                "[env] event %d persistence analytics: %d raw, %d aggregated, %d sources",
+                event.id,
+                metadata["raw_observation_count"],
+                metadata["aggregated_detection_count"],
+                metadata["persistent_source_count"],
+            )
+        except Exception as exc:
+            log.exception(
+                "[env] event %d persistence analysis failed: %s",
+                event.id,
+                exc,
+            )
+
+        log.info("[env] event %d classifying persistent thermal sources", event.id)
+        try:
+            metadata = ensure_source_classification(event, study)
+            log.info(
+                "[env] event %d baseline classification: %s",
+                event.id,
+                metadata["class_counts"],
+            )
+        except Exception as exc:
+            log.exception(
+                "[env] event %d source classification failed: %s",
+                event.id,
+                exc,
+            )
+
+        _create_event_timesteps(event)
+        log.info(
+            "[env] event %d thermal monitoring core prepared; "
+            "wildfire weather/model assets skipped",
+            event.id,
+        )
+        return
 
     print("[env] Checking ERA5 ...")
     whp.ensure_era5_coverage(study)
@@ -167,41 +248,9 @@ def _prepare_event(event) -> None:
                 fire_state_path,
             )
 
-    if not uses_wildfire_model(event):
-        from pipeline.thermal import ensure_thermal_context, ensure_thermal_history
-
-        log.info("[env] event %d preparing historical thermal observations", event.id)
-        try:
-            ensure_thermal_history(event, study)
-        except Exception as exc:
-            # Historical context is additive. Keep the compact real-observation
-            # replay usable when an archive request or normalization fails.
-            log.exception(
-                "[env] event %d historical thermal preparation failed: %s",
-                event.id,
-                exc,
-            )
-
-        log.info("[env] event %d preparing industrial and land-cover context", event.id)
-        try:
-            ensure_thermal_context(event, study)
-        except Exception as exc:
-            log.exception(
-                "[env] event %d thermal context preparation failed: %s",
-                event.id,
-                exc,
-            )
-
     # Slot persistence depends only on real observations. Do it immediately,
     # so optional fuel/terrain preparation cannot leave the API empty.
     _create_event_timesteps(event)
-
-    if not uses_wildfire_model(event):
-        log.info(
-            "[env] event %d is thermal monitoring; wildfire model assets are not prepared",
-            event.id,
-        )
-        return
 
     if not (study.landcover_raw_dir / "fuel_type.tif").exists():
         print("[env] Downloading fuel type map ...")

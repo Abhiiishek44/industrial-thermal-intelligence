@@ -20,6 +20,7 @@
   let _isAdmin            = false;  // set after authentication
   let _syncPushInterval   = null;   // admin: pushes virtual time to server every 10s
   let _initialReplayFloor = null;   // protects the richer event-1 default from a stale saved clock
+  let _thermalViewMode    = '5d';   // cumulative activity is the monitoring default
 
   // ── Boot ─────────────────────────────────────────────────────────────────────
 
@@ -62,21 +63,21 @@
     });
 
     initPredType();
+    initThermalViewMode();
     initDevWindow();
 
     allEvents = await loadEvents();
-    window.API.getRealtimeFirms().then(function(fc) {
-      homeMap.renderFirms(fc);
-    }).catch(function() {});
+    renderRegionSelector(allEvents);
 
     // Deep-link: /demo?event_id=<id>
     var _urlParams = new URLSearchParams(window.location.search);
     var _urlEventId = _urlParams.get('event_id');
     if (_urlEventId) {
       var _deepEvent = allEvents.find(function(e) { return String(e.id) === _urlEventId; });
-      if (_deepEvent) { openEvent(_deepEvent); } else { showView('home'); }
+      if (_deepEvent) { openEvent(_deepEvent, true); }
+      else { openDefaultRegion(); }
     } else {
-      showView('home');
+      openDefaultRegion();
     }
 
     window.addEventListener('popstate', function(e) {
@@ -84,7 +85,7 @@
         var ev = allEvents.find(function(e2) { return e2.id === e.state.eventId; });
         if (ev) { openEvent(ev, true); return; }
       }
-      goHome(true);
+      openDefaultRegion();
     });
   });
 
@@ -102,15 +103,8 @@
   }
 
   function goHome(fromPopstate) {
-    currentEvent = null;
-    if (_syncPushInterval) { clearInterval(_syncPushInterval); _syncPushInterval = null; }
-    if (window._syncRefetchInterval) { clearInterval(window._syncRefetchInterval); window._syncRefetchInterval = null; }
-    window.Dashboard.clearDashboard();
-    window.AIModal.setContext(null, null);
-    window.AIModal.close();
-    if (window.CrowdPanel) window.CrowdPanel.clearEvent();
-    if (!fromPopstate) history.pushState({}, '', '/demo');
-    showView('home');
+    if (currentEvent) openEvent(currentEvent, true);
+    else openDefaultRegion();
   }
 
   // ── Events ────────────────────────────────────────────────────────────────────
@@ -132,9 +126,12 @@
     if (!el) return;
     if (!events.length) { el.innerHTML = '<div class="empty-msg">No events</div>'; return; }
     el.innerHTML = events.map(function(ev) {
+      var focus = ev.monitoring_focus === 'forest' ? 'Forest' : 'Industrial';
+      var location = ev.state ? ' · ' + escHtml(ev.state) : '';
+      var readiness = ev.data_ready ? 'Ready' : 'Preparing data';
       return '<div class="hs-event-item" data-id="' + ev.id + '">' +
         '<div class="hs-event-name">' + escHtml(ev.name) + '</div>' +
-        '<div class="hs-event-meta">' + ev.year + ' · Click to open</div>' +
+        '<div class="hs-event-meta">' + focus + location + ' · ' + readiness + '</div>' +
         '</div>';
     }).join('');
     el.querySelectorAll('.hs-event-item').forEach(function(item) {
@@ -143,6 +140,38 @@
         if (ev) openEvent(ev);
       });
     });
+  }
+
+  function openDefaultRegion() {
+    if (!allEvents.length) {
+      showView('home');
+      return;
+    }
+    var preferred = allEvents.find(function(ev) { return ev.region_id === 'dhanbad_bokaro'; });
+    openEvent(preferred || allEvents[0], true);
+  }
+
+  function renderRegionSelector(events) {
+    var selector = document.getElementById('region-selector');
+    if (!selector) return;
+    var optionsFor = function(focus) {
+      return events.filter(function(ev) { return ev.monitoring_focus === focus; })
+        .sort(function(a, b) { return Number(a.id) - Number(b.id); })
+        .map(function(ev) {
+        var label = ev.name.replace(
+          / (Industrial Region|Industrial Corridor|Energy Corridor|Power and Industrial Region|Refinery Corridor|Forest Landscape) Monitoring$/,
+          ''
+        );
+        return '<option value="' + ev.id + '">' + escHtml(label) + '</option>';
+      }).join('');
+    };
+    selector.innerHTML =
+      '<optgroup label="Industrial thermal">' + optionsFor('industrial') + '</optgroup>' +
+      '<optgroup label="Forest fire">' + optionsFor('forest') + '</optgroup>';
+    selector.onchange = function() {
+      var selected = events.find(function(ev) { return String(ev.id) === selector.value; });
+      if (selected) openEvent(selected);
+    };
   }
 
   function _showEventLoading(label) {
@@ -158,9 +187,24 @@
   }
 
   async function openEvent(ev, fromPopstate) {
+    if (!ev) return;
+    if (_syncPushInterval) { clearInterval(_syncPushInterval); _syncPushInterval = null; }
+    if (window._syncRefetchInterval) { clearInterval(window._syncRefetchInterval); window._syncRefetchInterval = null; }
     currentEvent = ev;
+    eventMap.setMonitoringFocus(ev.monitoring_focus);
     _applyAnalysisMode(ev);
-    if (!fromPopstate) history.pushState({ eventId: ev.id }, '', '/demo?event_id=' + ev.id);
+    history.replaceState({ eventId: ev.id }, '', '/demo');
+
+    var selector = document.getElementById('region-selector');
+    var selectorMeta = document.getElementById('region-selector-meta');
+    if (selector) {
+      selector.value = String(ev.id);
+      selector.disabled = true;
+    }
+    if (selectorMeta) {
+      var focus = ev.monitoring_focus === 'forest' ? 'Forest fire monitoring' : 'Industrial thermal monitoring';
+      selectorMeta.textContent = focus + (ev.state ? ' · ' + ev.state : '');
+    }
 
     document.getElementById('breadcrumb').textContent = ev.name + ' · ' + ev.year;
 
@@ -180,6 +224,7 @@
       await loadTimesteps(ev.id);
     } finally {
       _hideEventLoading();
+      if (selector) selector.disabled = false;
     }
 
     // Sync replay clock with server
@@ -259,6 +304,14 @@
     var predSection = document.getElementById('pred-type-section');
     if (predTitle) predTitle.style.display = thermal ? 'none' : '';
     if (predSection) predSection.style.display = thermal ? 'none' : '';
+    document.getElementById('thermal-view-title')?.classList.toggle('hidden', !thermal);
+    document.getElementById('thermal-view-section')?.classList.toggle('hidden', !thermal);
+    if (thermal) {
+      _thermalViewMode = '5d';
+      var defaultView = document.querySelector('input[name="thermal-view"][value="5d"]');
+      if (defaultView) defaultView.checked = true;
+      _renderThermalLegend('5d');
+    }
 
     var dashboardTitle = document.querySelector('#bottom-header .bottom-title');
     if (dashboardTitle) {
@@ -267,16 +320,127 @@
 
     var legend = document.getElementById('event-legend');
     if (!legend) return;
-    legend.innerHTML = thermal
-      ? '<div class="leg-row"><span class="leg-swatch" style="background:#ff6600;opacity:.8"></span>Thermal detection</div>' +
-        '<div class="leg-row"><span class="leg-line" style="background:#cc0000"></span>Road near detection</div>' +
-        '<div class="leg-row"><span class="leg-line" style="background:#44dd44"></span>Monitored road</div>'
-      : '<div class="leg-row"><span class="leg-swatch" style="background:#cc2200;opacity:.7"></span>Fire perimeter</div>' +
+    if (!thermal) legend.innerHTML =
+        '<div class="leg-row"><span class="leg-swatch" style="background:#cc2200;opacity:.7"></span>Fire perimeter</div>' +
         '<div class="leg-row" id="legend-risk-row"><span class="leg-swatch" style="background:#ff2222;opacity:.7"></span>High risk zone (ML)</div>' +
         '<div class="leg-row" id="legend-actual-row" style="display:none"><span class="leg-swatch" style="background:#888;opacity:.5;border:1px dashed #aaa"></span>Actual perimeter</div>' +
         '<div class="leg-row"><span class="leg-line" style="background:#cc0000"></span>Burned road</div>' +
         '<div class="leg-row"><span class="leg-line" style="background:#ff8c00"></span>At-risk road</div>' +
         '<div class="leg-row"><span class="leg-line" style="background:#44dd44"></span>Clear road</div>';
+  }
+
+  function _renderThermalLegend(mode) {
+    var legend = document.getElementById('event-legend');
+    if (!legend) return;
+    var forest = currentEvent && currentEvent.monitoring_focus === 'forest';
+    if (mode === 'classification') {
+      legend.innerHTML =
+        '<div class="leg-row"><span class="leg-swatch" style="background:#ff8800;opacity:.8"></span>Industrial source</div>' +
+        '<div class="leg-row"><span class="leg-swatch" style="background:#2eaa58;opacity:.8"></span>Natural source</div>' +
+        '<div class="leg-row"><span class="leg-swatch" style="background:#888;opacity:.8"></span>Unknown source</div>';
+    } else if (mode === 'persistent') {
+      var persistentColors = forest
+        ? ['#6d28d9', '#a855f7', '#d8b4fe']
+        : ['#ff5500', '#ff9900', '#ffd166'];
+      legend.innerHTML =
+        '<div class="leg-row"><span class="leg-swatch" style="background:' + persistentColors[0] + ';opacity:.8"></span>High persistence</div>' +
+        '<div class="leg-row"><span class="leg-swatch" style="background:' + persistentColors[1] + ';opacity:.8"></span>Medium persistence</div>' +
+        '<div class="leg-row"><span class="leg-swatch" style="background:' + persistentColors[2] + ';opacity:.8"></span>Low persistence</div>';
+    } else {
+      legend.innerHTML = forest
+        ? '<div class="leg-row"><span class="leg-swatch" style="background:#a855f7;opacity:.85;border:1px solid #6d28d9"></span>Forest-area thermal hotspot (FIRMS)</div>'
+        : '<div class="leg-row"><span class="leg-swatch" style="background:#ff6600;opacity:.8"></span>Industrial thermal detection</div>';
+    }
+  }
+
+  function initThermalViewMode() {
+    document.querySelectorAll('input[name="thermal-view"]').forEach(function(input) {
+      input.addEventListener('change', function() {
+        if (!input.checked) return;
+        _thermalViewMode = input.value;
+        _renderThermalLegend(_thermalViewMode);
+        if (_currentTsIndex >= 0 && _timestepsDone[_currentTsIndex]) {
+          selectTimestep(_timestepsDone[_currentTsIndex], false);
+        }
+      });
+    });
+  }
+
+  function _mergeThermalActivity(fireCtx, geojson) {
+    if (!fireCtx || !geojson || !Array.isArray(geojson.features)) return fireCtx;
+    var features = geojson.features;
+    var frpValues = features.map(function(feature) {
+      var properties = feature.properties || {};
+      return Number(properties.frp != null ? properties.frp : properties.mean_frp);
+    }).filter(Number.isFinite);
+    var brightnessValues = features.map(function(feature) {
+      var properties = feature.properties || {};
+      return Number(properties.bright_ti4 != null ? properties.bright_ti4 : properties.brightness);
+    }).filter(Number.isFinite);
+    var totalFrp = frpValues.reduce(function(total, value) { return total + value; }, 0);
+    var classified = geojson.metadata && geojson.metadata.view === 'classification';
+    var persistent = geojson.metadata && geojson.metadata.view === 'persistent';
+    var sourceView = persistent || classified;
+    var countTruthy = function(property) {
+      return features.filter(function(feature) { return Boolean((feature.properties || {})[property]); }).length;
+    };
+    var countValues = function(property) {
+      return features.reduce(function(counts, feature) {
+        var value = (feature.properties || {})[property];
+        if (value != null && value !== '') counts[String(value)] = (counts[String(value)] || 0) + 1;
+        return counts;
+      }, {});
+    };
+    var uniqueValues = function(property) {
+      return Array.from(new Set(features.map(function(feature) {
+        return (feature.properties || {})[property];
+      }).filter(function(value) { return value != null && value !== ''; }))).sort();
+    };
+    fireCtx.fire = Object.assign({}, fireCtx.fire || {}, {
+      n_hotspots: features.length,
+      frp_sum: Number(totalFrp.toFixed(3)),
+    });
+    fireCtx.thermal = Object.assign({}, fireCtx.thermal || {}, {
+      detection_count: sourceView ? features.reduce(function(total, feature) {
+        return total + Number((feature.properties || {}).detection_count || 0);
+      }, 0) : features.length,
+      raw_observation_count: features.reduce(function(total, feature) {
+        return total + Number((feature.properties || {}).raw_observation_count || 1);
+      }, 0),
+      frp_mean_mw: frpValues.length ? Number((totalFrp / frpValues.length).toFixed(3)) : null,
+      frp_max_mw: frpValues.length ? Math.max.apply(null, frpValues) : null,
+      brightness_ti4_max_k: brightnessValues.length ? Math.max.apply(null, brightnessValues) : null,
+      inside_industrial_area_count: countTruthy('inside_industrial_polygon'),
+      near_industrial_facility_count: countTruthy('near_industrial_facility'),
+      confidence_counts: countValues('confidence'),
+      landcover_group_counts: countValues('landcover_group'),
+      satellites: uniqueValues('satellite'),
+      nearest_industries: uniqueValues('nearest_industry_name'),
+      view_mode: (geojson.metadata && geojson.metadata.view) || _thermalViewMode,
+      window_start: geojson.metadata && geojson.metadata.start,
+      window_end: geojson.metadata && geojson.metadata.end,
+      persistent_source_count: sourceView ? features.length : null,
+      persistence_level_counts: sourceView ? countValues('persistence_level') : {},
+      highest_active_days: sourceView ? Math.max.apply(null, features.map(function(feature) {
+        return Number((feature.properties || {}).unique_active_days || 0);
+      }).concat([0])) : null,
+      longest_duration_days: sourceView ? Math.max.apply(null, features.map(function(feature) {
+        return Number((feature.properties || {}).active_duration_days || 0);
+      }).concat([0])) : null,
+      highest_night_ratio: sourceView ? Math.max.apply(null, features.map(function(feature) {
+        return Number((feature.properties || {}).night_ratio || 0);
+      }).concat([0])) : null,
+      classification_counts: classified ? countValues('source_class') : {},
+      classification_mean_confidence: classified && features.length
+        ? features.reduce(function(total, feature) {
+            return total + Number((feature.properties || {}).classification_confidence || 0);
+          }, 0) / features.length
+        : null,
+      classification_method: classified && geojson.metadata
+        ? geojson.metadata.method
+        : null,
+    });
+    return fireCtx;
   }
 
   // ── Timesteps ─────────────────────────────────────────────────────────────────
@@ -304,7 +468,12 @@
     // Event 1 is more representative late in its progression. Select the
     // latest real May 10–11 row whose source overpass is no more than 1h old.
     var initialIdx = 0;
-    if (+eventId === 1) {
+    if (currentEvent && currentEvent.analysis_mode === 'thermal_monitoring') {
+      // Monitoring events should open on the newest satellite observation.
+      // Starting at index zero makes the cumulative views look almost empty
+      // even when the complete monitoring window is already available.
+      initialIdx = done.length - 1;
+    } else if (+eventId === 1) {
       done.forEach(function(ts, idx) {
         var day = (ts.slot_time || '').slice(0, 10);
         if (day >= '2016-05-10' && day <= '2016-05-11' && ts.gap_hours <= 1) initialIdx = idx;
@@ -350,7 +519,10 @@
     // controls can jump/speed the clock without touching each other's state.
     _replayVirtualTime = new Date(done[initialIdx].slot_time).getTime();
     _replayIdx = initialIdx;
-    _initialReplayFloor = +eventId === 1 ? _replayVirtualTime : null;
+    _initialReplayFloor = (+eventId === 1 ||
+      (currentEvent && currentEvent.analysis_mode === 'thermal_monitoring'))
+      ? _replayVirtualTime
+      : null;
     var _replayInterval = null;
 
     function stopPlay() {
@@ -393,7 +565,13 @@
     }
 
     selectTimestep(done[initialIdx]);
-    startPlay();
+    if (currentEvent && currentEvent.analysis_mode === 'thermal_monitoring') {
+      // Keep the monitoring dashboard on the latest data. Replay remains
+      // available through the timestep controls when the user requests it.
+      stopPlay();
+    } else {
+      startPlay();
+    }
   }
 
   function _highlightTick(idx) {
@@ -507,7 +685,14 @@
     if (section) section.style.display = '';
     if (titleEl) titleEl.style.display = '';
     var slider = document.getElementById('fcast-slider');
-    if (slider) { slider.value = 3; }
+    if (slider) {
+      slider.value = 3;
+      slider.disabled = !currentWeather.length;
+    }
+    if (!currentWeather.length) {
+      _renderFcastWeather(null);
+      return;
+    }
     _setForecastHour(3);
   }
 
@@ -684,16 +869,34 @@
       window.CrowdPanel.refresh(ts.slot_time);
     }
 
+    var thermalActivityRequest = null;
+    if (currentEvent.analysis_mode === 'thermal_monitoring' && _thermalViewMode !== 'replay') {
+      thermalActivityRequest = _thermalViewMode === 'persistent'
+        ? window.API.getPersistentThermalSources(eid, 30, ts.slot_time)
+        : _thermalViewMode === 'classification'
+        ? window.API.getThermalClassifications(eid, 30, ts.slot_time)
+        : window.API.getThermalDetections(
+            eid,
+            _thermalViewMode === '30d' ? 30 : 5,
+            ts.slot_time,
+          );
+    }
+    var hotspotRequest = thermalActivityRequest || window.API.getHotspots(eid, tsid, _crowdMode);
+
     // Map layers (non-blocking)
     Promise.allSettled([
       window.API.getPerimeter(eid, tsid, _crowdMode),
-      window.API.getHotspots(eid, tsid, _crowdMode),
+      hotspotRequest,
       window.API.getRiskZones(eid, tsid, _crowdMode),
       window.API.getRoads(eid, tsid),
       window.API.getWindRiskZones(eid, tsid),
     ]).then(function(r) {
       if (r[0].status === 'fulfilled') eventMap.renderPerimeter(r[0].value);
-      if (r[1].status === 'fulfilled') eventMap.renderHotspots(r[1].value);
+      if (r[1].status === 'fulfilled') {
+        if (_thermalViewMode === 'persistent') eventMap.renderPersistentSources(r[1].value);
+        else if (_thermalViewMode === 'classification') eventMap.renderClassifiedSources(r[1].value);
+        else eventMap.renderHotspots(r[1].value);
+      }
       if (r[2].status === 'fulfilled') eventMap.renderRiskZones(r[2].value);
       if (r[3].status === 'fulfilled') eventMap.renderRoads(r[3].value);
       if (r[4].status === 'fulfilled') eventMap.renderRiskZonesWind(r[4].value);
@@ -711,13 +914,18 @@
       window.API.getFireContext(eid, tsid),
       window.API.getWeather(eid, tsid),
       window.API.getWindField(eid, tsid),
+      hotspotRequest,
     ]).then(function(r) {
       var forecast  = r[2].status === 'fulfilled' ? r[2].value : [];
       var windHours = r[3].status === 'fulfilled' ? r[3].value : [];
       // renderDashboard first (creates the DOM elements), then update weather into them
+      var fireContext = r[1].status === 'fulfilled' ? r[1].value : null;
+      if (thermalActivityRequest && r[4].status === 'fulfilled') {
+        fireContext = _mergeThermalActivity(fireContext, r[4].value);
+      }
       window.Dashboard.renderDashboard(
         r[0].status === 'fulfilled' ? r[0].value : null,
-        r[1].status === 'fulfilled' ? r[1].value : null,
+        fireContext,
         forecast,
       );
       window.Dashboard.updateWeather(forecast);

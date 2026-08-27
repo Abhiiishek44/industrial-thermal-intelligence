@@ -33,6 +33,7 @@ services:
       - ../backend:/app/backend
       - ../frontend:/app/frontend
       - ../data:/app/data
+      - ../tests:/app/tests:ro
 
 volumes:
   postgres_data:

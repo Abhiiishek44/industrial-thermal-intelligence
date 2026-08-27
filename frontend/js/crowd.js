@@ -14,6 +14,7 @@
   let _eventId     = null;
   let _eventMap    = null;
   let _pickingLoc  = false;
+  let _mapClickHandler = null;
   let _modalReport = null;    // report object currently shown in modal
   let _virtualTime = null;    // ISO string — replay clock position (null = no filter)
   const _likedComments = new Set();  // comment IDs liked this session (for toggle)
@@ -94,6 +95,12 @@
   function init() {
     document.getElementById('crowd-panel-close').addEventListener('click', close);
     document.getElementById('crowd-panel-overlay').addEventListener('click', close);
+    document.querySelectorAll('.field-report-action').forEach(function(btn) {
+      btn.addEventListener('click', function() { open(btn.dataset.reportType); });
+    });
+    document.querySelectorAll('.crowd-type-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() { _selectPostType(btn.dataset.reportType); });
+    });
     // Tab switching
     document.querySelectorAll('.crowd-tab').forEach(function(btn) {
       btn.addEventListener('click', function() {
@@ -125,18 +132,22 @@
   }
 
   function setEvent(eventId, eventMap) {
+    if (_eventMap && _mapClickHandler) {
+      _eventMap.map.off('click', _mapClickHandler);
+    }
     _eventId  = eventId;
     _eventMap = eventMap;
 
     if (eventMap) {
-      eventMap.map.on('click', function(e) {
+      _mapClickHandler = function(e) {
         if (!_pickingLoc) return;
         document.getElementById('crowd-lat').value = e.latlng.lat.toFixed(5);
         document.getElementById('crowd-lon').value = e.latlng.lng.toFixed(5);
         _pickingLoc = false;
         document.getElementById('crowd-pick-btn').classList.remove('active');
         eventMap.map.getContainer().style.cursor = '';
-      });
+      };
+      eventMap.map.on('click', _mapClickHandler);
 
       Object.keys(_layers).forEach(function(type) {
         if (_layers[type]) eventMap.removeOverlay(_layers[type]);
@@ -151,20 +162,40 @@
   function clearEvent() {
     _eventId  = null;
     if (_eventMap) {
+      if (_mapClickHandler) _eventMap.map.off('click', _mapClickHandler);
       Object.keys(_layers).forEach(function(type) {
         if (_layers[type]) { _eventMap.removeOverlay(_layers[type]); _layers[type] = null; }
       });
     }
     _eventMap = null;
+    _mapClickHandler = null;
     close();
     _closeModal();
   }
 
   // ── Open / Close panel ────────────────────────────────────────────────────
 
-  function open() {
+  function open(postType) {
+    if (postType) _selectPostType(postType);
+    var submitTab = document.querySelector('.crowd-tab[data-tab="submit"]');
+    if (submitTab && !submitTab.classList.contains('active')) submitTab.click();
     document.getElementById('crowd-panel').classList.remove('hidden');
     document.getElementById('crowd-panel-overlay').classList.remove('hidden');
+  }
+
+  function _selectPostType(postType) {
+    if (!POST_LABELS[postType]) return;
+    document.getElementById('crowd-post-type').value = postType;
+    document.querySelectorAll('.crowd-type-btn').forEach(function(btn) {
+      btn.classList.toggle('active', btn.dataset.reportType === postType);
+    });
+    var placeholders = {
+      fire_report: 'Describe flames, smoke, direction, or intensity…',
+      info: 'Share useful conditions, access, or safety information…',
+      request_help: 'Describe the help needed and urgency…',
+      offer_help: 'Describe the help or resources you can provide…',
+    };
+    document.getElementById('crowd-description').placeholder = placeholders[postType];
   }
 
   function close() {
@@ -319,10 +350,28 @@
     var lat         = parseFloat(document.getElementById('crowd-lat').value);
     var lon         = parseFloat(document.getElementById('crowd-lon').value);
     var photoFile   = document.getElementById('crowd-photo').files[0];
+    var observedAt  = _virtualTime || new Date().toISOString();
     var resultEl    = document.getElementById('crowd-submit-result');
 
+    if (!description) {
+      _showResult(resultEl, 'error', 'Please add a short description.');
+      return;
+    }
+
     if (isNaN(lat) || isNaN(lon)) {
-      _showResult(resultEl, 'error', 'Lat and Lon are required.');
+      if (_eventMap && _eventMap.map) {
+        var center = _eventMap.map.getCenter();
+        lat = center.lat;
+        lon = center.lng;
+        document.getElementById('crowd-lat').value = lat.toFixed(5);
+        document.getElementById('crowd-lon').value = lon.toFixed(5);
+      } else {
+        _showResult(resultEl, 'error', 'Choose a location on the map.');
+        return;
+      }
+    }
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+      _showResult(resultEl, 'error', 'Enter a valid latitude and longitude.');
       return;
     }
 
@@ -339,22 +388,29 @@
         fd.append('description', description);
         fd.append('lat',         lat);
         fd.append('lon',         lon);
+        fd.append('observed_at', observedAt);
         fd.append('photo',       photoFile);
         report = await window.API.submitFieldReport(_eventId, fd);
       } else {
         report = await window.API.submitFieldReport(_eventId,
-          { post_type: postType, description: description, lat: lat, lon: lon });
+          { post_type: postType, description: description, lat: lat, lon: lon,
+            observed_at: observedAt });
       }
 
-      _showResult(resultEl, 'success', 'Submitted — AI assessment running in background.');
+      _showResult(resultEl, 'success', POST_LABELS[postType] + ' submitted at ' + lat.toFixed(4) + ', ' + lon.toFixed(4) + '.');
       _addReportMarker({ id: report.id, post_type: postType, lat: lat, lon: lon,
-                         description: description, like_count: 0, created_at: new Date().toISOString() });
+                         description: description, like_count: 0,
+                         created_at: report.created_at || observedAt });
       _refreshCount();
 
       document.getElementById('crowd-description').value = '';
       document.getElementById('crowd-lat').value         = '';
       document.getElementById('crowd-lon').value         = '';
       document.getElementById('crowd-photo').value       = '';
+      setTimeout(function() {
+        var reportsTab = document.querySelector('.crowd-tab[data-tab="reports"]');
+        if (reportsTab) reportsTab.click();
+      }, 450);
     } catch(e) {
       _showResult(resultEl, 'error', 'Error: ' + e.message);
     } finally {

@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from pipeline.training_data.schemas import DatasetSplit, RegionProfile
+from pipeline.regions import get_active_region
+
+
+_ACTIVE_REGION = get_active_region()
 
 
 TRAINING_REGIONS = (
@@ -22,16 +26,16 @@ TRAINING_REGIONS = (
         provider_options=(("perimeter_path", "data/static/actual_perimeter/actual_perimeter.gpkg"),),
     ),
     RegionProfile(
-        region_id="chakan_2024_demo",
-        display_name="Chakan MIDC 2024 demo",
-        bbox=(73.7358129924, 18.7095245857, 73.8649120643, 18.8080439189),
-        start_date="2024-01-01",
-        end_date="2024-12-31",
+        region_id="vijayanagar_2026_demo",
+        display_name=f"{_ACTIVE_REGION.name} 2026 demo",
+        bbox=_ACTIVE_REGION.bbox,
+        start_date="2026-07-29",
+        end_date="2026-08-27",
         observation_provider="event_enriched_parquet",
         feature_provider="generic_enriched_features",
         label_provider="unlabeled",
-        geographic_group_id="in_maharashtra_chakan",
-        temporal_group_id="in_maharashtra_chakan_2024",
+        geographic_group_id="in_karnataka_vijayanagar",
+        temporal_group_id="in_karnataka_vijayanagar_2026",
         source_event_id=2,
         fixed_split=DatasetSplit.EXCLUDED,
         exclude_from_model_fitting=True,

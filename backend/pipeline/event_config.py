@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
+from pipeline.regions import REGIONS, get_auto_prepare_region_ids
+
 
 WILDFIRE_MODE = "wildfire_prediction"
 THERMAL_MONITORING_MODE = "thermal_monitoring"
@@ -24,6 +26,7 @@ class EventConfig:
     roads_provider: str
     population_provider: str
     actual_perimeter_provider: str
+    view_bbox: tuple[float, float, float, float] | None = None
     thermal_history_start: str | None = None
     thermal_history_end: str | None = None
     firms_history_sources: tuple[str, ...] = ()
@@ -33,6 +36,11 @@ class EventConfig:
     industrial_boundary_filter: str | None = None
     landcover_provider: str = "none"
     industrial_near_distance_m: float = 1000.0
+    region_id: str | None = None
+    default_view_days: int = 5
+    monitoring_focus: str | None = None
+    state: str | None = None
+    public: bool = True
 
     @property
     def bbox_wkt(self) -> str:
@@ -53,7 +61,7 @@ class EventConfig:
         )
 
 
-EVENT_CONFIGS = (
+_LEGACY_EVENT_CONFIGS = (
     EventConfig(
         event_id=1,
         name="Fort McMurray Wildfire 2016",
@@ -71,43 +79,58 @@ EVENT_CONFIGS = (
         roads_provider="canada_static",
         population_provider="canada_census",
         actual_perimeter_provider="canada_static",
-    ),
-    EventConfig(
-        event_id=2,
-        name="Chakan Industrial Thermal Monitoring",
-        year=2024,
-        # Aggregate extent of the Chakan MIDC phases from the official MIDC GIS.
-        bbox=(73.7358129924, 18.7095245857, 73.8649120643, 18.8080439189),
-        # A 30-day replay window exposes the available January observations.
-        start_date="2024-01-01",
-        end_date="2024-01-30",
-        description=(
-            "Satellite thermal-anomaly monitoring for the Chakan MIDC industrial area in "
-            "Pune, Maharashtra. Wildfire spread classification is intentionally disabled."
-        ),
-        analysis_mode=THERMAL_MONITORING_MODE,
-        country_code="in",
-        roads_provider="osm",
-        population_provider="none",
-        actual_perimeter_provider="none",
-        thermal_history_start="2024-01-01",
-        thermal_history_end="2024-12-31",
-        firms_history_sources=("VIIRS_SNPP_SP", "VIIRS_NOAA20_SP"),
-        firms_chunk_days=5,
-        industrial_context_provider="osm_overpass",
-        industrial_boundary_provider="midc_arcgis",
-        industrial_boundary_filter="Chakan",
-        landcover_provider="esa_worldcover_2021",
-        industrial_near_distance_m=1000.0,
+        public=False,
     ),
 )
 
+
+def _monitoring_event(region) -> EventConfig:
+    focus_label = "industrial thermal" if region.monitoring_focus == "industrial" else "forest-fire"
+    return EventConfig(
+        event_id=region.event_id,
+        name=f"{region.name} Monitoring",
+        year=2026,
+        bbox=region.bbox,
+        view_bbox=region.view_bbox,
+        start_date=region.history_start,
+        end_date=region.history_end,
+        description=(
+            f"NASA FIRMS {focus_label} monitoring for {region.name}, {region.state}, India. "
+            "Detections are enriched with land cover, persistence, and nearby industrial context."
+        ),
+        analysis_mode=THERMAL_MONITORING_MODE,
+        country_code=region.country_code,
+        # The India catalog prioritizes FIRMS/context analytics. Fetching a
+        # second Overpass dataset for roads across every region quickly hits
+        # public-service rate limits and is not required by these views.
+        roads_provider="none",
+        population_provider="none",
+        actual_perimeter_provider="none",
+        thermal_history_start=region.history_start,
+        thermal_history_end=region.history_end,
+        firms_history_sources=region.firms_history_sources,
+        firms_chunk_days=5,
+        industrial_context_provider="osm_overpass",
+        industrial_boundary_provider="none",
+        landcover_provider="esa_worldcover_2021",
+        industrial_near_distance_m=1000.0,
+        region_id=region.region_id,
+        default_view_days=region.default_view_days,
+        monitoring_focus=region.monitoring_focus,
+        state=region.state,
+    )
+
+
+INDIA_EVENT_CONFIGS = tuple(_monitoring_event(region) for region in REGIONS.values())
+EVENT_CONFIGS = _LEGACY_EVENT_CONFIGS + INDIA_EVENT_CONFIGS
+
 _BY_NAME = {config.name: config for config in EVENT_CONFIGS}
+_BY_ID = {config.event_id: config for config in EVENT_CONFIGS}
 
 
 def get_event_config(event) -> EventConfig:
     """Return a configured profile, defaulting unknown events to safe monitoring."""
-    configured = _BY_NAME.get(event.name)
+    configured = _BY_ID.get(event.id) or _BY_NAME.get(event.name)
     if configured is not None:
         return configured
 
@@ -131,3 +154,18 @@ def get_event_config(event) -> EventConfig:
 
 def uses_wildfire_model(event) -> bool:
     return get_event_config(event).analysis_mode == WILDFIRE_MODE
+
+
+def is_public_event(event) -> bool:
+    """Return whether an event belongs in the India-first UI catalog."""
+    return bool(get_event_config(event).public)
+
+
+def should_prepare_event(event) -> bool:
+    """Limit expensive startup preparation to configured India regions."""
+    config = get_event_config(event)
+    return bool(
+        config.public
+        and config.country_code == "in"
+        and config.region_id in get_auto_prepare_region_ids()
+    )

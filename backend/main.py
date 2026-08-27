@@ -27,6 +27,7 @@ def create_app():
     from api.timesteps import timesteps_bp
     from api.firms     import firms_bp
     from api.config    import config_bp
+    from api.regions   import regions_bp
     from api.crowd     import crowd_bp
 
     app.register_blueprint(auth_bp,      url_prefix='/auth')
@@ -34,6 +35,7 @@ def create_app():
     app.register_blueprint(timesteps_bp, url_prefix='/api')
     app.register_blueprint(firms_bp,     url_prefix='/api/firms')
     app.register_blueprint(config_bp,    url_prefix='/api/config')
+    app.register_blueprint(regions_bp,   url_prefix='/api/regions')
     app.register_blueprint(crowd_bp,     url_prefix='/api/events')
 
     # ── Frontend routes ───────────────────────────────────────────────────────

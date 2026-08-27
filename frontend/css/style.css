@@ -161,6 +161,16 @@ body.light .home-sidebar { background: rgba(255,255,255,.92); }
   padding: 10px 13px 4px; font-size: 9px; font-weight: 700;
   color: var(--text2); text-transform: uppercase; letter-spacing: .08em;
 }
+.region-section-title { padding-top: 12px; }
+.region-select-wrap { padding: 4px 12px 10px; border-bottom: 1px solid var(--border); }
+#region-selector {
+  width: 100%; padding: 8px 28px 8px 9px; border: 1px solid var(--border);
+  border-radius: 6px; background: var(--surface2); color: var(--text);
+  font-size: 11px; line-height: 1.3; cursor: pointer;
+}
+#region-selector:focus { border-color: var(--accent); outline: none; }
+#region-selector:disabled { opacity: .65; cursor: progress; }
+.region-selector-meta { margin-top: 6px; color: var(--text2); font-size: 9px; line-height: 1.35; }
 
 /* Timestep slider */
 .ts-slider-wrap { padding: 4px 13px 10px; }
@@ -973,6 +983,21 @@ textarea.dev-input { resize: vertical; min-height: 42px; }
 }
 .crowd-badge.hidden { display: none; }
 
+.field-report-actions {
+  position: absolute; z-index: 700; top: 10px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 5px; padding: 5px;
+  background: rgba(22, 27, 34, .92); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 3px 12px rgba(0,0,0,.28); backdrop-filter: blur(5px);
+}
+.field-report-action {
+  border: 1px solid transparent; border-radius: 5px; background: transparent;
+  color: var(--text-secondary); padding: 6px 9px; font-size: 11px; cursor: pointer;
+  white-space: nowrap;
+}
+.field-report-action:hover, .field-report-action:focus-visible {
+  color: var(--text); border-color: var(--accent); background: rgba(255,107,53,.12); outline: none;
+}
+
 /* Overlay */
 #crowd-panel-overlay {
   position: fixed; inset: 0; z-index: 910;
@@ -1022,6 +1047,16 @@ textarea.dev-input { resize: vertical; min-height: 42px; }
 
 /* Submit form */
 .crowd-form label { display: block; font-size: 11px; color: var(--text-muted); margin: 10px 0 3px; }
+.crowd-type-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.crowd-type-btn {
+  display: flex; align-items: center; gap: 7px; min-height: 42px; padding: 8px 9px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg);
+  color: var(--text-secondary); cursor: pointer; text-align: left; font-size: 15px;
+}
+.crowd-type-btn span { font-size: 11px; font-weight: 600; }
+.crowd-type-btn:hover, .crowd-type-btn.active {
+  border-color: var(--accent); color: var(--text); background: rgba(255,107,53,.1);
+}
 .crowd-input {
   width: 100%; box-sizing: border-box;
   background: var(--bg); border: 1px solid var(--border); color: var(--text);
@@ -1032,6 +1067,7 @@ textarea.dev-input { resize: vertical; min-height: 42px; }
 select.crowd-input { resize: none; }
 .crowd-loc-row { display: flex; gap: 6px; align-items: flex-end; }
 .crowd-loc-row .crowd-input { flex: 1; }
+.crowd-location-hint { color: var(--text-muted); font-size: 10px; line-height: 1.35; margin-top: 4px; }
 .crowd-pick-btn {
   background: var(--surface2); border: 1px solid var(--border); color: var(--text-muted);
   border-radius: 5px; padding: 7px 10px; cursor: pointer; font-size: 14px; flex-shrink: 0;
@@ -1276,6 +1312,12 @@ select.crowd-input { resize: none; }
   #event-map-wrap { width: 100%; }
   #event-legend   { top: calc(var(--header-h) + 8px); left: 8px; right: auto; padding: 6px 8px; }
   .leg-row        { font-size: 9px; margin-bottom: 3px; }
+  .field-report-actions {
+    top: auto; bottom: calc(var(--dash-h) + 70px); left: 8px; right: 8px; transform: none;
+    display: grid; grid-template-columns: 1fr 1fr;
+  }
+  .field-report-action { text-align: center; padding: 7px 5px; }
+  .field-report-actions .crowd-badge { position: absolute; top: -7px; right: -5px; }
 
   /* Prediction status bar: above bottom panel */
   #prediction-status-bar { bottom: calc(var(--dash-h) + 10px); }
@@ -1346,7 +1388,7 @@ select.crowd-input { resize: none; }
   }
 
   /* ── Crowd panel ── */
-  .crowd-panel {
+  #crowd-panel {
     width: 100% !important;
     max-width: 100% !important;
     left: 0 !important; right: 0 !important;

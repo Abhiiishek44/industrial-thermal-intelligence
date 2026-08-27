@@ -89,11 +89,13 @@
 
       this._eventLayer = L.layerGroup().addTo(this.map);
       this._firmsLayer = L.layerGroup().addTo(this.map);
+      this._overviewLayer = L.layerGroup().addTo(this.map);
       // Dedicated canvas renderer for FIRMS hotspots — draws all points on one
       // <canvas> instead of one SVG node per point. Survives the ~100k Canada-wide
       // hotspots during fire season that would otherwise freeze the tab.
       this._firmsCanvas = L.canvas({ padding: 0.5 });
-      this.map.setView([56.5, -111.5], 5);
+      this._overviewCanvas = L.canvas({ padding: 0.5 });
+      this.map.setView([22.5, 80.5], 5);
     }
 
     setTheme(dark) {
@@ -130,12 +132,17 @@
     renderEvents(events) {
       this._eventLayer.clearLayers();
       const self = this;
+      const catalogBounds = [];
       events.forEach(ev => {
         if (!ev.bbox) return;
         const [minLon, minLat, maxLon, maxLat] = ev.bbox;
+        const forest = ev.monitoring_focus === 'forest';
+        const eventColor = forest ? '#2eaa58' : '#ff6b35';
+        const focusLabel = forest ? 'Forest-fire monitoring' : 'Industrial thermal monitoring';
+        catalogBounds.push([minLat, minLon], [maxLat, maxLon]);
         const rect = L.rectangle([[minLat, minLon], [maxLat, maxLon]], {
-          color: '#ff6b35', weight: 2.5,
-          fillColor: '#ff6b35', fillOpacity: 0.06,
+          color: eventColor, weight: 2.5,
+          fillColor: eventColor, fillOpacity: 0.06,
           dashArray: '7 4',
           className: 'event-rect',
           interactive: true,
@@ -143,7 +150,7 @@
         });
         rect.bindTooltip(
           '<div style="font-weight:700;font-size:13px">' + ev.name + '</div>' +
-          '<div style="font-size:11px;opacity:.7">' + ev.year + ' · Click to open</div>',
+          '<div style="font-size:11px;opacity:.7">' + focusLabel + ' · Click to focus</div>',
           { sticky: true, className: 'event-tooltip' }
         );
         rect.on('click', () => self.onEventClick(ev));
@@ -151,18 +158,73 @@
         const clat = (minLat + maxLat) / 2;
         const clon = (minLon + maxLon) / 2;
         const marker = L.circleMarker([clat, clon], {
-          radius: 12, color: '#ff6b35', weight: 2.5,
-          fillColor: '#ff4500', fillOpacity: 0.7,
+          radius: 10, color: eventColor, weight: 2.5,
+          fillColor: eventColor, fillOpacity: 0.7,
         });
         marker.bindTooltip(
           '<div style="font-weight:700;font-size:13px">' + ev.name + '</div>' +
-          '<div style="font-size:11px;opacity:.7">' + ev.year + ' · Click to open</div>',
+          '<div style="font-size:11px;opacity:.7">' + focusLabel + ' · Click to focus</div>',
           { sticky: true }
         );
         marker.on('click', () => self.onEventClick(ev));
         self._eventLayer.addLayer(rect);
         self._eventLayer.addLayer(marker);
       });
+      if (catalogBounds.length) {
+        this.map.fitBounds(catalogBounds, { padding: [28, 28], maxZoom: 6 });
+      }
+    }
+
+    renderIndiaOverview(geojson) {
+      this._overviewLayer.clearLayers();
+      if (!geojson || !Array.isArray(geojson.features)) return;
+      const colors = { industrial: '#ff6b35', natural: '#2eaa58', unknown: '#888888' };
+      const renderer = this._overviewCanvas;
+      L.geoJSON(geojson, {
+        pointToLayer(feature, latlng) {
+          const properties = feature.properties || {};
+          const sourceClass = properties.source_class || 'unknown';
+          const detections = Number(properties.detection_count || 1);
+          const color = colors[sourceClass] || colors.unknown;
+          return L.circleMarker(latlng, {
+            radius: Math.max(4, Math.min(11, 3 + Math.sqrt(detections))),
+            color: color,
+            fillColor: color,
+            fillOpacity: 0.78,
+            weight: 1,
+            renderer: renderer,
+          });
+        },
+        onEachFeature(feature, layer) {
+          const p = feature.properties || {};
+          layer.bindPopup(
+            '<b>' + (p.region_name || 'India thermal source') + '</b><br>' +
+            (p.state ? p.state + '<br>' : '') +
+            'Class: <b>' + (p.source_class || 'unknown') + '</b><br>' +
+            'Detections: ' + (p.detection_count || 0) + '<br>' +
+            'Active days: ' + (p.unique_active_days || 0) + '<br>' +
+            'Maximum FRP: ' + (p.max_frp != null ? Number(p.max_frp).toFixed(1) + ' MW' : 'N/A')
+          );
+        },
+      }).addTo(this._overviewLayer);
+    }
+
+    focusEvent(ev) {
+      if (!ev || !ev.bbox) return;
+      const [minLon, minLat, maxLon, maxLat] = ev.bbox;
+      this.map.fitBounds([[minLat, minLon], [maxLat, maxLon]], {
+        padding: [45, 45],
+        maxZoom: 9,
+      });
+    }
+
+    fitIndia(events) {
+      const bounds = [];
+      (events || []).forEach(function(ev) {
+        if (!ev.bbox) return;
+        bounds.push([ev.bbox[1], ev.bbox[0]], [ev.bbox[3], ev.bbox[2]]);
+      });
+      if (bounds.length) this.map.fitBounds(bounds, { padding: [28, 28], maxZoom: 6 });
     }
   }
 
@@ -171,6 +233,7 @@
   class EventMap {
     constructor(containerId) {
       this._dark = true;
+      this._monitoringFocus = 'industrial';
       this.map = L.map(containerId, { zoomControl: false });
       L.control.zoom({ position: 'bottomright' }).addTo(this.map);
 
@@ -185,7 +248,7 @@
       };
       this._baseTile = this._baseTiles['OSM'];
       this._baseTile.addTo(this.map);
-      this.map.setView([56.5, -111.5], 8);
+      this.map.setView([22.5, 80.5], 6);
 
       this._layers = {
         risk3h:    L.layerGroup().addTo(this.map),
@@ -195,6 +258,9 @@
         roads:     L.layerGroup().addTo(this.map),
         hotspots:  L.layerGroup().addTo(this.map),
       };
+      // Forest fire-season windows can contain thousands of FIRMS points.
+      // Canvas avoids creating one SVG DOM node per detection.
+      this._hotspotCanvas = L.canvas({ padding: 0.5 });
       // Wind-driven risk zone layers (separate from ML layers)
       this._windLayers = {
         wRisk3h:  L.layerGroup().addTo(this.map),
@@ -266,6 +332,10 @@
       this._dark = dark;
     }
 
+    setMonitoringFocus(focus) {
+      this._monitoringFocus = focus === 'forest' ? 'forest' : 'industrial';
+    }
+
     setSatelliteDate(dateStr) {
       if (!dateStr) return;
       const url = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/' +
@@ -327,19 +397,107 @@
     renderHotspots(geojson) {
       this._layers.hotspots.clearLayers();
       if (!geojson?.features?.length) return;
+      const renderer = this._hotspotCanvas;
+      const forest = this._monitoringFocus === 'forest';
+      const strokeColor = forest ? '#6d28d9' : '#ff6600';
+      const fillColor = forest ? '#a855f7' : '#ff2200';
       L.geoJSON(geojson, {
         pointToLayer(f, latlng) {
           const frp = f.properties?.frp || 0;
           const r = Math.max(4, Math.min(13, 4 + frp / 70));
           return L.circleMarker(latlng, {
-            radius: r, color: '#ff6600', fillColor: '#ff2200', fillOpacity: 0.85, weight: 1,
+            radius: r, color: strokeColor, fillColor: fillColor,
+            fillOpacity: 0.82, weight: forest ? 1.8 : 1,
+            renderer: renderer,
           });
         },
         onEachFeature(f, layer) {
           const p = f.properties || {};
-          layer.bindPopup('<b>Hotspot</b><br>FRP: ' +
+          layer.bindPopup('<b>' + (forest ? 'Forest-area thermal hotspot' : 'Industrial thermal detection') + '</b><br>FRP: ' +
             (p.frp != null ? p.frp.toFixed(1) + ' MW' : 'N/A') +
             '<br>Confidence: ' + (p.confidence || 'N/A'));
+        },
+      }).addTo(this._layers.hotspots);
+    }
+
+    renderPersistentSources(geojson) {
+      this._layers.hotspots.clearLayers();
+      if (!geojson?.features?.length) return;
+      const colors = this._monitoringFocus === 'forest'
+        ? { HIGH: '#6d28d9', MEDIUM: '#a855f7', LOW: '#d8b4fe' }
+        : { HIGH: '#ff5500', MEDIUM: '#ff9900', LOW: '#ffd166' };
+      const renderer = this._hotspotCanvas;
+      L.geoJSON(geojson, {
+        pointToLayer(f, latlng) {
+          const p = f.properties || {};
+          const count = Number(p.detection_count || 1);
+          const color = colors[p.persistence_level] || '#999999';
+          return L.circleMarker(latlng, {
+            radius: Math.max(7, Math.min(18, 6 + Math.sqrt(count) * 1.5)),
+            color: color,
+            fillColor: color,
+            fillOpacity: 0.72,
+            weight: 2,
+            renderer: renderer,
+          });
+        },
+        onEachFeature(f, layer) {
+          const p = f.properties || {};
+          const distance = p.distance_to_nearest_industry_m != null
+            ? Number(p.distance_to_nearest_industry_m).toFixed(0) + ' m'
+            : 'N/A';
+          layer.bindPopup(
+            '<b>' + (p.cluster_id || 'Persistent source') + '</b><br>' +
+            'Persistence: ' + (p.persistence_level || 'N/A') + '<br>' +
+            'Detections: ' + (p.detection_count || 0) + '<br>' +
+            'Active days: ' + (p.unique_active_days || 0) + '<br>' +
+            'Mean / max FRP: ' +
+              (p.mean_frp != null ? Number(p.mean_frp).toFixed(1) : 'N/A') + ' / ' +
+              (p.max_frp != null ? Number(p.max_frp).toFixed(1) : 'N/A') + ' MW<br>' +
+            'Night ratio: ' + (p.night_ratio != null ? Math.round(Number(p.night_ratio) * 100) + '%' : 'N/A') + '<br>' +
+            'Nearest industry: ' + (p.nearest_industry_name || 'Unknown') + ' (' + distance + ')'
+          );
+        },
+      }).addTo(this._layers.hotspots);
+    }
+
+    renderClassifiedSources(geojson) {
+      this._layers.hotspots.clearLayers();
+      if (!geojson?.features?.length) return;
+      const colors = { industrial: '#ff8800', natural: '#2eaa58', unknown: '#888888' };
+      const renderer = this._hotspotCanvas;
+      L.geoJSON(geojson, {
+        pointToLayer(f, latlng) {
+          const p = f.properties || {};
+          const count = Number(p.detection_count || 1);
+          const color = colors[p.source_class] || colors.unknown;
+          return L.circleMarker(latlng, {
+            radius: Math.max(8, Math.min(19, 7 + Math.sqrt(count) * 1.5)),
+            color: color,
+            fillColor: color,
+            fillOpacity: 0.78,
+            weight: 2.2,
+            renderer: renderer,
+          });
+        },
+        onEachFeature(f, layer) {
+          const p = f.properties || {};
+          const evidence = Array.isArray(p.classification_evidence)
+            ? p.classification_evidence
+            : [];
+          layer.bindPopup(
+            '<b>' + (p.cluster_id || 'Thermal source') + '</b><br>' +
+            'Classification: <b>' + (p.source_class || 'unknown') + '</b><br>' +
+            'Subtype: ' + (p.source_subtype || 'N/A').replaceAll('_', ' ') + '<br>' +
+            'Confidence: ' + (p.classification_confidence != null
+              ? Math.round(Number(p.classification_confidence) * 100) + '%'
+              : 'N/A') + '<br>' +
+            'Detections / active days: ' + (p.detection_count || 0) + ' / ' +
+              (p.unique_active_days || 0) + '<br>' +
+            '<b>Evidence</b><br>' + (evidence.length ? evidence.map(function(item) {
+              return '• ' + item;
+            }).join('<br>') : 'No decisive evidence')
+          );
         },
       }).addTo(this._layers.hotspots);
     }

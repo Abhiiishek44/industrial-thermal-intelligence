@@ -34,7 +34,7 @@ MIDC_BOUNDARY_URL = (
 )
 OVERPASS_URLS = (
     "https://overpass-api.de/api/interpreter",
-    "https://overpass.private.coffee/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
 )
 WORLDCOVER_URL = (
     "https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/"
@@ -192,6 +192,7 @@ def _overpass_request(query: str, *, session=requests) -> dict:
                 "post",
                 url,
                 session=session,
+                timeout=45,
                 data=query.encode("utf-8"),
                 headers={
                     "User-Agent": "wildfire-decision-support/1.0",
@@ -340,7 +341,13 @@ def collect_worldcover(event, study) -> Path:
         with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR"):
             for tile_id in _worldcover_tile_ids(config.bbox):
                 sources.append(rasterio.open(WORLDCOVER_URL.format(tile=tile_id)))
-            array, transform = merge(sources, bounds=config.bbox)
+            merge_options = {"bounds": config.bbox}
+            if config.monitoring_focus == "forest":
+                # A native 10 m crop across a broad forest landscape can
+                # exceed hundreds of millions of pixels. The classifier uses
+                # 500 m neighborhood fractions, for which ~100 m is ample.
+                merge_options["res"] = (0.0009, 0.0009)
+            array, transform = merge(sources, **merge_options)
             profile = sources[0].profile.copy()
             profile.update({
                 "height": array.shape[1],
@@ -423,13 +430,24 @@ def collect_industrial_context(event, study) -> dict:
     }
     boundary_provider = boundary_providers.get(config.industrial_boundary_provider)
     context_provider = context_providers.get(config.industrial_context_provider)
-    boundaries = boundary_provider(event, study) if boundary_provider else (
-        _empty_geo_frame(["name", "source", "source_id"])
-    )
-    areas, facilities = context_provider(event, study) if context_provider else (
-        _empty_geo_frame(["name", "industry_type", "source"]),
-        _empty_geo_frame(["name", "industry_type", "source"]),
-    )
+    try:
+        boundaries = boundary_provider(event, study) if boundary_provider else (
+            _empty_geo_frame(["name", "source", "source_id"])
+        )
+    except Exception as exc:
+        log.warning("[thermal-context] boundary provider unavailable: %s", exc)
+        boundaries = _empty_geo_frame(["name", "source", "source_id"])
+    try:
+        areas, facilities = context_provider(event, study) if context_provider else (
+            _empty_geo_frame(["name", "industry_type", "source"]),
+            _empty_geo_frame(["name", "industry_type", "source"]),
+        )
+    except Exception as exc:
+        # Land-cover enrichment and natural-fire classification remain useful
+        # when a public Overpass instance is temporarily rate limited.
+        log.warning("[thermal-context] industrial context provider unavailable: %s", exc)
+        areas = _empty_geo_frame(["name", "industry_type", "source"])
+        facilities = _empty_geo_frame(["name", "industry_type", "source"])
     metadata = {
         "event_id": event.id,
         "boundary_provider": config.industrial_boundary_provider,
@@ -461,7 +479,9 @@ def collect_landcover(event, study) -> dict:
         "product": "ESA WorldCover 2021 v200" if raster_path else None,
         "source_url": "https://esa-worldcover.org/" if raster_path else None,
         "license": "CC BY 4.0" if raster_path else None,
-        "resolution_m": 10 if raster_path else None,
+        "resolution_m": (
+            100 if config.monitoring_focus == "forest" else 10
+        ) if raster_path else None,
         "classes": {str(code): values[0] for code, values in WORLDCOVER_CLASSES.items()},
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -487,10 +507,13 @@ def enrich_thermal_history(event, study) -> dict:
     areas = gpd.read_file(paths.industrial_areas_path) if paths.industrial_areas_path.exists() else _empty_geo_frame([])
     facilities = gpd.read_file(paths.facilities_path) if paths.facilities_path.exists() else _empty_geo_frame([])
 
-    metric_points = points.to_crs("EPSG:32643")
-    metric_boundaries = boundaries.to_crs("EPSG:32643") if not boundaries.empty else boundaries
-    metric_areas = areas.to_crs("EPSG:32643") if not areas.empty else areas
-    metric_facilities = facilities.to_crs("EPSG:32643") if not facilities.empty else facilities
+    # India spans several UTM zones. Estimate the local projected CRS from
+    # each event AOI instead of applying Vijayanagar's zone to every region.
+    metric_crs = points.estimate_utm_crs() or "EPSG:3857"
+    metric_points = points.to_crs(metric_crs)
+    metric_boundaries = boundaries.to_crs(metric_crs) if not boundaries.empty else boundaries
+    metric_areas = areas.to_crs(metric_crs) if not areas.empty else areas
+    metric_facilities = facilities.to_crs(metric_crs) if not facilities.empty else facilities
     boundary_union = unary_union(metric_boundaries.geometry) if not metric_boundaries.empty else None
     area_union = unary_union(metric_areas.geometry) if not metric_areas.empty else None
 
@@ -584,6 +607,15 @@ def ensure_thermal_context(event, study) -> dict | None:
     config = get_event_config(event)
     if config.analysis_mode != THERMAL_MONITORING_MODE:
         return None
+    paths = ThermalContextPaths.from_project_dir(study.project_dir)
+    history_path = paths.thermal_dir / "firms_history.parquet"
+    if (
+        paths.enriched_path.exists()
+        and paths.enrichment_metadata_path.exists()
+        and history_path.exists()
+        and paths.enriched_path.stat().st_mtime >= history_path.stat().st_mtime
+    ):
+        return json.loads(paths.enrichment_metadata_path.read_text(encoding="utf-8"))
     collect_industrial_context(event, study)
     collect_landcover(event, study)
     return enrich_thermal_history(event, study)

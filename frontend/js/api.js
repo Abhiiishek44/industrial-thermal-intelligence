@@ -104,10 +104,23 @@
     async setReplayTime(eid, ms, speed) { return apiFetch('/api/events/' + eid + '/replay-time', { method: 'POST', body: JSON.stringify({ ms, speed: speed || 1 }) }); },
 
     async getEvents()        { return apiFetch('/api/events/'); },
+    async getIndiaThermalOverview() { return apiFetch('/api/events/thermal/overview'); },
     async getAoi(eid)        { return apiFetch('/api/events/' + eid + '/layers/aoi'); },
     async getRealtimeFirms(hours) { return apiFetch('/api/firms/realtime' + (hours ? '?hours=' + hours : '')); },
     async getEvent(id)       { return apiFetch('/api/events/' + id); },
     async getTimesteps(id)   { return apiFetch('/api/events/' + id + '/timesteps'); },
+    async getThermalDetections(eid, days, end) {
+      var query = '?days=' + encodeURIComponent(days) + '&end=' + encodeURIComponent(end);
+      return apiFetch('/api/events/' + eid + '/thermal/detections' + query);
+    },
+    async getPersistentThermalSources(eid, days, end) {
+      var query = '?days=' + encodeURIComponent(days) + '&end=' + encodeURIComponent(end);
+      return apiFetch('/api/events/' + eid + '/thermal/persistent' + query);
+    },
+    async getThermalClassifications(eid, days, end) {
+      var query = '?days=' + encodeURIComponent(days) + '&end=' + encodeURIComponent(end);
+      return apiFetch('/api/events/' + eid + '/thermal/classifications' + query);
+    },
 
     async getPerimeter(eid, tsid, crowd)  { return apiFetch('/api/events/' + eid + '/timesteps/' + tsid + '/perimeter' + (crowd ? '?crowd=true' : '')); },
     async getHotspots(eid, tsid, crowd)  { return apiFetch('/api/events/' + eid + '/timesteps/' + tsid + '/hotspots' + (crowd ? '?crowd=true' : '')); },

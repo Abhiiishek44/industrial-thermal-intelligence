@@ -4,7 +4,7 @@ api/firms.py
 Real-time NASA FIRMS hotspot endpoint.
 
 Route:
-    GET /api/firms/realtime          → past 24 h hotspots (Canada bbox)
+    GET /api/firms/realtime          → recent hotspots (India catalog envelope)
     GET /api/firms/realtime?hours=48 → past 48 h  (max 5 days = 120 h)
 
 Response: GeoJSON FeatureCollection
@@ -34,12 +34,12 @@ log = logging.getLogger(__name__)
 _FIRMS_BASE       = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
 _FIRMS_STATUS_URL = "https://firms.modaps.eosdis.nasa.gov/mapserver/mapkey_status/?MAP_KEY={key}"
 _SOURCES     = [
-    "VIIRS_SNPP_NRT",    # Suomi-NPP
     "VIIRS_NOAA20_NRT",  # NOAA-20
     "VIIRS_NOAA21_NRT",  # NOAA-21
-    "MODIS_NRT",         # Terra/Aqua (1 km, broader coverage)
 ]
-_CANADA_BBOX  = "-141.0,41.7,-52.6,83.1"  # minLon,minLat,maxLon,maxLat
+# Tight envelope around the configured India catalog, not a costly global
+# request. Event-detail views still use each region's exact bounding box.
+_INDIA_BBOX   = "69.65,15.10,93.50,24.40"  # minLon,minLat,maxLon,maxLat
 _DEFAULT_DAYS = 5
 _CACHE_TTL_S  = 3600   # NASA FIRMS NRT refreshes ~hourly; match that cadence
 
@@ -73,13 +73,13 @@ def _store(key: str, data: dict):
 
 def _fetch_source(api_key: str, source: str, day_range: int) -> dict:
     """Fetch one satellite source, using file cache. Returns GeoJSON FeatureCollection."""
-    cache_key = f"firms_{source}_{day_range}"
+    cache_key = f"firms_india_{source}_{day_range}"
     cached = _cached(cache_key)
     if cached:
         log.debug("[firms] cache hit %s day_range=%d", source, day_range)
         return cached
 
-    url = f"{_FIRMS_BASE}/{api_key}/{source}/{_CANADA_BBOX}/{day_range}"
+    url = f"{_FIRMS_BASE}/{api_key}/{source}/{_INDIA_BBOX}/{day_range}"
     log.info("[firms] fetching %s (day_range=%d)", source, day_range)
     try:
         r = requests.get(url, timeout=30)
@@ -219,7 +219,7 @@ def refresh():
         days = _DEFAULT_DAYS
 
     for source in _SOURCES:
-        p = _cache_path(f"firms_{source}_{days}")
+        p = _cache_path(f"firms_india_{source}_{days}")
         if p.exists():
             p.unlink()
             log.info("[firms] cache cleared: %s", p.name)

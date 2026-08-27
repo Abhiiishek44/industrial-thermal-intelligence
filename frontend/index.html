@@ -36,14 +36,15 @@
   <div id="home-map"></div>
 
   <div class="map-overlay" id="home-legend">
-    <div class="legend-title">NASA FIRMS · 5-day</div>
-    <div class="legend-row"><span class="dot" style="background:#ff2200"></span> Active fire</div>
-    <div class="legend-row"><span class="dot" style="background:transparent;border:2px dashed #ff6b35"></span> Fire event</div>
-    <div class="legend-hint">Click an event to open</div>
+    <div class="legend-title">India · NASA FIRMS</div>
+    <div class="legend-row"><span class="dot" style="background:#ff2200"></span> Recent thermal anomaly</div>
+    <div class="legend-row"><span class="dot" style="background:#ff6b35"></span> Industrial corridor</div>
+    <div class="legend-row"><span class="dot" style="background:#2eaa58"></span> Forest landscape</div>
+    <div class="legend-hint">Choose a region in the monitoring dashboard</div>
   </div>
 
   <div class="home-sidebar">
-    <div class="hs-title">Fire Events</div>
+    <div class="hs-title">India Monitoring Regions</div>
     <div id="home-event-list"><div class="empty-msg">Loading…</div></div>
   </div>
 </div>
@@ -60,9 +61,40 @@
       <button id="lp-collapse-btn" class="lp-collapse-btn" title="Collapse panel">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
       </button>
+      <div class="lp-section-title region-section-title">Monitoring Region</div>
+      <div class="region-select-wrap">
+        <select id="region-selector" aria-label="Monitoring region">
+          <option>Loading regions…</option>
+        </select>
+        <div id="region-selector-meta" class="region-selector-meta"></div>
+      </div>
       <div class="lp-section-title">Timestep Replay</div>
       <div id="timestep-slider-section">
         <div class="empty-msg">Loading…</div>
+      </div>
+
+      <div class="lp-section-title hidden" id="thermal-view-title">Thermal View</div>
+      <div class="pred-type-wrap hidden" id="thermal-view-section">
+        <label class="pred-type-opt">
+          <input type="radio" name="thermal-view" value="5d" checked>
+          <span class="pred-type-info"><span class="pred-type-label">5-Day Activity</span><span class="pred-type-hint">Cumulative detections through the selected time</span></span>
+        </label>
+        <label class="pred-type-opt">
+          <input type="radio" name="thermal-view" value="30d">
+          <span class="pred-type-info"><span class="pred-type-label">30-Day Activity</span><span class="pred-type-hint">Full monitoring history through the selected time</span></span>
+        </label>
+        <label class="pred-type-opt">
+          <input type="radio" name="thermal-view" value="replay">
+          <span class="pred-type-info"><span class="pred-type-label">Observation Replay</span><span class="pred-type-hint">Only the selected satellite observation</span></span>
+        </label>
+        <label class="pred-type-opt">
+          <input type="radio" name="thermal-view" value="persistent">
+          <span class="pred-type-info"><span class="pred-type-label">Persistent Sources</span><span class="pred-type-hint">Recurring spatial clusters over 30 days</span></span>
+        </label>
+        <label class="pred-type-opt">
+          <input type="radio" name="thermal-view" value="classification">
+          <span class="pred-type-info"><span class="pred-type-label">Source Classification</span><span class="pred-type-hint">Explainable industrial, natural or unknown baseline</span></span>
+        </label>
       </div>
 
       <div class="lp-section-title" id="fcast-section-title" style="display:none">Forecast Horizon</div>
@@ -106,6 +138,13 @@
     <!-- Map (full remaining width) -->
     <div id="event-map-wrap">
       <div id="event-map"></div>
+      <div id="field-report-actions" class="field-report-actions" aria-label="Field intelligence actions">
+        <button type="button" class="field-report-action" data-report-type="fire_report">🔥 Fire Report</button>
+        <button type="button" class="field-report-action" data-report-type="info">ℹ️ Info</button>
+        <button type="button" class="field-report-action" data-report-type="request_help">🆘 Need Help</button>
+        <button type="button" class="field-report-action" data-report-type="offer_help">🤝 Offer Help</button>
+        <span id="crowd-report-count" class="crowd-badge hidden" aria-label="Field report count">0</span>
+      </div>
       <div id="prediction-status-bar" class="hidden">
         <span class="pred-status-spinner"></span>
         <span id="prediction-status-text">Building prediction…</span>
@@ -342,14 +381,15 @@
 
   <!-- Submit tab -->
   <div class="crowd-tab-content" id="crowd-tab-submit">
-    <form id="crowd-submit-form">
+    <form id="crowd-submit-form" class="crowd-form">
       <label>Report Type</label>
-      <select id="crowd-post-type" class="crowd-input">
-        <option value="fire_report">Fire Report</option>
-        <option value="info">Information</option>
-        <option value="request_help">Request Help</option>
-        <option value="offer_help">Offer Help</option>
-      </select>
+      <div class="crowd-type-grid" role="group" aria-label="Report type">
+        <button type="button" class="crowd-type-btn active" data-report-type="fire_report">🔥<span>Fire Report</span></button>
+        <button type="button" class="crowd-type-btn" data-report-type="info">ℹ️<span>Info</span></button>
+        <button type="button" class="crowd-type-btn" data-report-type="request_help">🆘<span>Need Help</span></button>
+        <button type="button" class="crowd-type-btn" data-report-type="offer_help">🤝<span>Offer Help</span></button>
+      </div>
+      <input type="hidden" id="crowd-post-type" value="fire_report">
 
       <label>Description</label>
       <textarea id="crowd-description" class="crowd-input" rows="3" placeholder="What are you observing?"></textarea>
@@ -360,6 +400,7 @@
         <input type="number" id="crowd-lon" class="crowd-input" placeholder="Longitude" step="0.00001">
         <button type="button" id="crowd-pick-btn" class="crowd-pick-btn" title="Click map to pick location">📍</button>
       </div>
+      <div class="crowd-location-hint">Use 📍 and click the map. If left blank, the visible map centre is used.</div>
 
       <label>Photo (optional)</label>
       <input type="file" id="crowd-photo" class="crowd-input" accept="image/*">

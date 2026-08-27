@@ -118,8 +118,21 @@ def collect_firms_history(event, study, *, session=requests) -> list[Path]:
                 f"{FIRMS_AREA_CSV_URL}/{api_key}/{source}/{area}/{days}/"
                 f"{chunk_start.isoformat()}"
             )
-            response = session.get(url, timeout=60)
-            response.raise_for_status()
+            try:
+                response = session.get(url, timeout=60)
+                response.raise_for_status()
+            except requests.RequestException as exc:
+                # Sensors have independent availability windows. Preserve and
+                # normalize successful products even when one source is
+                # temporarily unavailable or unsupported for a requested date.
+                log.warning(
+                    "[thermal-history] event %d skipped %s %s: %s",
+                    event.id,
+                    source,
+                    chunk_start,
+                    exc,
+                )
+                continue
             body = response.text.lstrip("\ufeff").strip()
 
             first_line = body.splitlines()[0].lower() if body else ""
@@ -279,6 +292,12 @@ def ensure_thermal_history(event, study) -> dict | None:
     auto_fetch = os.getenv("FIRMS_HISTORY_AUTO_FETCH", "1").strip().lower()
     if auto_fetch not in {"0", "false", "no", "off"}:
         collect_firms_history(event, study)
+    paths = ThermalHistoryPaths.from_study(study)
+    raw_inputs = list(paths.raw_dir.glob("*.csv")) + list(paths.raw_dir.glob("*.empty.json"))
+    if paths.history_path.exists() and paths.metadata_path.exists() and raw_inputs:
+        newest_input = max(path.stat().st_mtime for path in raw_inputs)
+        if paths.history_path.stat().st_mtime >= newest_input:
+            return json.loads(paths.metadata_path.read_text(encoding="utf-8"))
     return normalize_firms_history(event, study)
 
 
