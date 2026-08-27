@@ -25,7 +25,7 @@ _SMOOTH_IN  = 300.0   # contract back — net area preserved, edges rounded
 
 def load_youden_threshold(
     models_dir: Path,
-    model_name: str = "lr_steps",
+    model_name: str = "lr",
     scale: float = 2.5,
 ) -> float:
     """Load Youden's J threshold from model_full_thresholds.json.

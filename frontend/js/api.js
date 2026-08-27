@@ -138,7 +138,10 @@ async generateReport(eid, tsid, force) {
     },
 
     async runPredictionStep(eid, tsid) {
-      return apiFetch('/api/events/' + eid + '/timesteps/' + tsid + '/run-prediction', { method: 'POST' });
+      return apiFetch('/api/events/' + eid + '/timesteps/' + tsid + '/run-prediction', {
+        method: 'POST',
+        body: JSON.stringify({ prefetch_next: true }),
+      });
     },
     async rerunPredictionStep(eid, tsid) {
       return apiFetch('/api/events/' + eid + '/timesteps/' + tsid + '/run-prediction', {

@@ -15,17 +15,17 @@ import geopandas as gpd
 
 log = logging.getLogger(__name__)
 
-_DATA_DIR = Path(__file__).resolve().parents[3] / "data"
-
-
-def population_counts(bbox, perimeter_geom, risk: dict, fire_year: int | None) -> dict:
-    pop_path = _DATA_DIR / "static" / "population.gpkg"
+def population_counts(pop_path: Path, perimeter_geom, risk: dict,
+                      fire_year: int | None) -> dict:
     if not pop_path.exists():
-        log.warning("[spatial] population.gpkg not found — population counts unavailable")
-        return {f: 0 for f in ["affected_population", "at_risk_3h", "at_risk_6h", "at_risk_12h"]}
+        log.info("[spatial] event population cache not configured")
+        return {
+            **{f: 0 for f in ["affected_population", "at_risk_3h", "at_risk_6h", "at_risk_12h"]},
+            "data_available": False,
+        }
 
     census_year = _nearest_census_year(fire_year)
-    da = gpd.read_file(pop_path, bbox=bbox, layer="dissemination_areas")
+    da = gpd.read_file(pop_path, layer="population")
     da = da[da["census_year"] == census_year].to_crs("EPSG:4326")
 
     def pop_in(zone_geom, exclude_geom=None):
@@ -49,6 +49,7 @@ def population_counts(bbox, perimeter_geom, risk: dict, fire_year: int | None) -
         "at_risk_3h":          pop_in(r3,  perimeter_geom),
         "at_risk_6h":          pop_in(r6,  _union_geoms(perimeter_geom, r3)),
         "at_risk_12h":         pop_in(r12, _union_geoms(perimeter_geom, r3, r6)),
+        "data_available":       True,
     }
 
 
@@ -101,7 +102,9 @@ def bearing_label(lon1, lat1, lon2, lat2) -> str:
 
 def describe_point(lon: float, lat: float, landmarks: list) -> str:
     if not landmarks:
-        return f"{lat:.3f}N {abs(lon):.3f}W"
+        lat_dir = "N" if lat >= 0 else "S"
+        lon_dir = "E" if lon >= 0 else "W"
+        return f"{abs(lat):.3f}{lat_dir} {abs(lon):.3f}{lon_dir}"
     best = min(landmarks, key=lambda p: haversine_km(lon, lat, p["lon"], p["lat"]))
     dist = haversine_km(lon, lat, best["lon"], best["lat"])
     bear = bearing_label(best["lon"], best["lat"], lon, lat)

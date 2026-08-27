@@ -1,4 +1,6 @@
 import os
+from datetime import date
+
 import psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 from flask_sqlalchemy import SQLAlchemy
@@ -52,10 +54,9 @@ def ensure_db():
 
 
 def seed_db():
-    """Insert initial data if the database is empty.
+    """Insert configured demo events and synchronize their replay windows.
 
-    Also patches any existing events that are missing end_date (treated as
-    realtime otherwise, which crashes the pipeline). Safe to call on every startup.
+    Safe to call on every startup. Other fields on existing events are preserved.
 
     An admin credential account is created once when ADMIN_PASSWORD is set.
     """
@@ -78,38 +79,49 @@ def seed_db():
                 "not promoting it automatically"
             )
 
-    _SEED_NAME = 'Fort McMurray Wildfire 2016'
-    _SEED_END  = '2016-05-10'
+    from pipeline.event_config import EVENT_CONFIGS
 
-    if FireEvent.query.count() == 0:
-        events = [
-            FireEvent(
-                name        = _SEED_NAME,
-                year        = 2016,
-                bbox        = WKTElement(
-                    'POLYGON((-112.634 56.157, -110.002 56.157, -110.002 57.380, -112.634 57.380, -112.634 56.157))',
-                    srid=4326
-                ),
-                start_date  = '2016-05-01',
-                end_date    = _SEED_END,
-                description = (
-                    'The 2016 Horse River Wildfire (MWF-009) forced the evacuation of approximately '
-                    '88,000 residents from Fort McMurray, Alberta. It burned approximately 590,000 '
-                    'hectares and is the costliest disaster in Canadian history.'
-                ),
-            ),
-        ]
-        db.session.add_all(events)
-        db.session.commit()
-        print(f"[db] seeded {len(events)} fire event(s)")
-        return
+    added = []
+    updated = []
+    for config in EVENT_CONFIGS:
+        existing = FireEvent.query.filter_by(name=config.name).first()
+        if existing is not None:
+            configured_start = date.fromisoformat(config.start_date)
+            configured_end = date.fromisoformat(config.end_date)
+            if existing.start_date != configured_start or existing.end_date != configured_end:
+                existing.start_date = configured_start
+                existing.end_date = configured_end
+                updated.append(config.name)
+            continue
+        if db.session.get(FireEvent, config.event_id) is not None:
+            print(
+                f"[db] cannot seed configured event {config.event_id} ({config.name}): "
+                "that id is already in use"
+            )
+            continue
+        event = FireEvent(
+            id=config.event_id,
+            name=config.name,
+            year=config.year,
+            bbox=WKTElement(config.bbox_wkt, srid=4326),
+            start_date=config.start_date,
+            end_date=config.end_date,
+            description=config.description,
+        )
+        db.session.add(event)
+        added.append(config.name)
 
-    # Patch any existing event missing end_date — without it the pipeline
-    # treats the event as realtime and crashes on event.end_date.strftime().
-    patched = 0
-    for event in FireEvent.query.filter(FireEvent.end_date.is_(None)).all():
-        event.end_date = _SEED_END
-        patched += 1
-    if patched:
+    if added:
+        from sqlalchemy import text
+
+        db.session.flush()
+        db.session.execute(text(
+            "SELECT setval(pg_get_serial_sequence('fire_events', 'id'), "
+            "MAX(id), true) FROM fire_events"
+        ))
+        print(f"[db] seeded {len(added)} fire event(s): {', '.join(added)}")
+
+    if added or updated:
         db.session.commit()
-        print(f"[db] patched end_date on {patched} existing fire event(s)")
+    if updated:
+        print(f"[db] updated replay window for {len(updated)} event(s): {', '.join(updated)}")

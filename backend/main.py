@@ -1,4 +1,6 @@
 import config  # loads .env variables
+import logging
+import os
 from flask import Flask
 from flask_cors import CORS
 from pathlib import Path
@@ -6,6 +8,11 @@ from db.connection import db, get_db_uri
 
 BASE_DIR     = Path(__file__).resolve().parent
 FRONTEND_DIR = BASE_DIR.parent / "frontend"
+
+logging.basicConfig(
+    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 
 def create_app():
@@ -113,7 +120,6 @@ if __name__ == '__main__':
     from pipeline.db import setup_db
     from pipeline.env import prepare_all_events
     from pipeline.check import run_checks
-    from pipeline.check.builder import build_slots_only
 
     app = create_app()
 
@@ -126,10 +132,6 @@ if __name__ == '__main__':
     def _run_pipeline():
         print("=== [pipeline] Preparing environment ===")
         prepare_all_events(app)
-
-        print("=== [pipeline] Building hourly slot grid ===")
-        with app.app_context():
-            build_slots_only()
 
         print("=== [pipeline] Sweeping desynced timesteps ===")
         _sweep_desynced_timesteps(app)

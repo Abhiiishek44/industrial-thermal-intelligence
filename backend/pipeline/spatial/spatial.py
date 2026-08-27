@@ -6,7 +6,8 @@ Stage 2: Spatial analysis per timestep.
 Inputs  (files):  prediction/perimeter.geojson, risk_zones_{3,6,12}h.geojson
                   data/events/<year>_<id>/landmarks.json
                   timesteps/<ts>/hotspot/hotspots.geojson
-Inputs  (static): data/static/roads_canada.gpkg, data/static/population.gpkg
+Inputs  (event):  data_processed/roads/roads_clipped.gpkg
+                  data_processed/spatial/population.gpkg (when configured)
 
 Outputs (files):  spatial_analysis/roads.geojson
                   spatial_analysis/population.json
@@ -87,7 +88,8 @@ def run_spatial_analysis(event_id: int, ts_id: int, out_dir: Path,
         bbox, perimeter_geom, risk, landmarks,
         ev_dir=ev_dir, hotspot_path=hotspot_path,
     )
-    ml_counts = population_counts(bbox, perimeter_geom, risk, event.year)
+    population_path = ev_dir / "data_processed" / "spatial" / "population.gpkg"
+    ml_counts = population_counts(population_path, perimeter_geom, risk, event.year)
     log.info("[spatial] ts=%d: ML affected_population=%d", ts_id, ml_counts.get("affected_population", 0))
 
     # ── ML outputs ────────────────────────────────────────────────────────────
@@ -142,14 +144,8 @@ def _build_roads(bbox, perimeter_geom, risk: dict, landmarks: list,
             roads = roads.set_crs("EPSG:4326")
         roads = roads.to_crs("EPSG:4326")
     else:
-        roads_path = _DATA_DIR / "static" / "roads_canada.gpkg"
-        if not roads_path.exists():
-            log.warning("[spatial] roads_canada.gpkg not found — skipping road analysis")
-            return _EMPTY
-        roads = gpd.read_file(roads_path, bbox=bbox)
-        roads = roads[roads["highway"].isin(_ROAD_TYPES)].copy()
-        roads["name"]      = roads["name"].fillna("").str.strip()
-        roads["road_name"] = roads["name"].where(roads["name"] != "", roads["highway"])
+        log.warning("[spatial] event-scoped roads cache not found — skipping road analysis")
+        return _EMPTY
 
     # Load hotspots → buffered union
     hotspot_union = None

@@ -21,7 +21,10 @@ def _event_dir(event) -> Path:
 
 
 def _serialize(e):
+    from pipeline.event_config import get_event_config
+
     bounds = to_shape(e.bbox).bounds  # (minx, miny, maxx, maxy)
+    config = get_event_config(e)
     return {
         'id':          e.id,
         'name':        e.name,
@@ -30,6 +33,7 @@ def _serialize(e):
         'end_date':    e.end_date.isoformat() if e.end_date else None,
         'description': e.description,
         'bbox':        list(bounds),  # [minLon, minLat, maxLon, maxLat]
+        'analysis_mode': config.analysis_mode,
     }
 
 
@@ -92,6 +96,117 @@ def get_static_roads(event_id: int):
     return jsonify(json.loads(gdf.to_json())), 200
 
 
+@events_bp.route('/<int:event_id>/thermal/history', methods=['GET'])
+@token_required
+def get_thermal_history(event_id: int):
+    """Return availability and date coverage for normalized FIRMS history."""
+    event = FireEvent.query.get(event_id)
+    if not event:
+        return jsonify({'error': 'event not found'}), 404
+
+    from pipeline.event_config import THERMAL_MONITORING_MODE, get_event_config
+    from pipeline.thermal import load_history_metadata
+
+    config = get_event_config(event)
+    if config.analysis_mode != THERMAL_MONITORING_MODE:
+        return jsonify({
+            'error': 'thermal history is not configured for this event',
+        }), 409
+
+    metadata = load_history_metadata(event)
+    if metadata is None:
+        history_dates = config.thermal_history_dates
+        metadata = {
+            'event_id': event.id,
+            'data_available': False,
+            'observation_count': 0,
+            'first_observed_at': None,
+            'last_observed_at': None,
+            'requested_start_date': history_dates[0].isoformat() if history_dates else None,
+            'requested_end_date': history_dates[1].isoformat() if history_dates else None,
+        }
+    return jsonify(metadata), 200
+
+
+def _thermal_event_or_error(event_id: int):
+    """Resolve a thermal event for context endpoints."""
+    from pipeline.event_config import THERMAL_MONITORING_MODE, get_event_config
+
+    event = FireEvent.query.get(event_id)
+    if not event:
+        return None, (jsonify({'error': 'event not found'}), 404)
+    if get_event_config(event).analysis_mode != THERMAL_MONITORING_MODE:
+        return None, (jsonify({
+            'error': 'thermal context is not configured for this event',
+        }), 409)
+    return event, None
+
+
+@events_bp.route('/<int:event_id>/thermal/context', methods=['GET'])
+@token_required
+def get_thermal_context(event_id: int):
+    """Return source coverage and aggregate enrichment counts."""
+    event, error = _thermal_event_or_error(event_id)
+    if error:
+        return error
+
+    from pipeline.thermal import load_context_metadata
+
+    metadata = load_context_metadata(event)
+    if metadata is None:
+        return jsonify({
+            'event_id': event.id,
+            'data_available': False,
+            'observation_count': 0,
+            'classification_available': False,
+        }), 200
+    return jsonify({**metadata, 'data_available': True}), 200
+
+
+def _event_geojson(event, relative_path: str):
+    path = _event_dir(event) / relative_path
+    if not path.exists():
+        return jsonify({'type': 'FeatureCollection', 'features': []}), 200
+    return jsonify(json.loads(path.read_text(encoding='utf-8'))), 200
+
+
+@events_bp.route('/<int:event_id>/thermal/detections', methods=['GET'])
+@token_required
+def get_enriched_thermal_detections(event_id: int):
+    """Return FIRMS observations with descriptive industrial/land-cover context."""
+    event, error = _thermal_event_or_error(event_id)
+    if error:
+        return error
+    return _event_geojson(event, 'data_processed/thermal/firms_enriched.geojson')
+
+
+@events_bp.route('/<int:event_id>/layers/midc', methods=['GET'])
+@token_required
+def get_midc_context(event_id: int):
+    event, error = _thermal_event_or_error(event_id)
+    if error:
+        return error
+    return _event_geojson(event, 'data_processed/industrial/midc_boundary.geojson')
+
+
+@events_bp.route('/<int:event_id>/layers/industrial-areas', methods=['GET'])
+@token_required
+def get_industrial_areas(event_id: int):
+    event, error = _thermal_event_or_error(event_id)
+    if error:
+        return error
+    return _event_geojson(event, 'data_processed/industrial/industrial_areas.geojson')
+
+
+@events_bp.route('/<int:event_id>/layers/industrial-facilities', methods=['GET'])
+@token_required
+def get_industrial_facilities(event_id: int):
+    event, error = _thermal_event_or_error(event_id)
+    if error:
+        return error
+    return _event_geojson(event, 'data_processed/industrial/facilities.geojson')
+
+
 # ── Shared replay clock ──────────────────────────────────────────────────────
 
 @events_bp.route('/<int:event_id>/replay-time', methods=['GET'])
@@ -136,55 +251,4 @@ def set_replay_time(event_id: int):
         event.replay_ms = int(ms)
         db.session.commit()
 
-    # Trigger prediction builds for the current timestep and the next 2 upcoming
-    # ones so they're ready before the clock reaches them.
-    _trigger_upcoming_predictions(event_id, int(ms))
-
     return jsonify({'ok': True}), 200
-
-
-def _trigger_upcoming_predictions(event_id: int, current_ms: int, lookahead: int = 2) -> None:
-    """Fire-and-forget: start prediction builds for timesteps at/near current_ms.
-
-    Finds the closest timestep to current_ms plus the next `lookahead` slots,
-    and calls run-prediction on each if they are still pending.
-    """
-    try:
-        import pandas as pd
-        from flask import current_app
-        from db.models import EventTimestep, FireEvent
-        from pipeline.check.builder import build_single_timestep_ondemand
-        from utils.background import run_in_background
-        from api.timesteps import _ts_base, _read_status, _write_status
-
-        event = FireEvent.query.get(event_id)
-        if not event:
-            return
-
-        current_ts = pd.Timestamp(current_ms, unit='ms')
-        rows = (
-            EventTimestep.query
-            .filter_by(event_id=event_id)
-            .order_by(EventTimestep.slot_time)
-            .all()
-        )
-        if not rows:
-            return
-
-        # Find the index of the slot closest to current_ms
-        closest_idx = min(
-            range(len(rows)),
-            key=lambda i: abs((pd.Timestamp(rows[i].slot_time) - current_ts).total_seconds())
-        )
-
-        app = current_app._get_current_object()
-        for i in range(closest_idx, min(closest_idx + lookahead + 1, len(rows))):
-            ts = rows[i]
-            ml_dir = _ts_base(event.id, event.year, ts.slot_time) / "prediction" / "ML"
-            from pipeline.check.builder_slots import _read_status as _bs_read, _write_status as _bs_write
-            st = _bs_read(ml_dir)
-            if st == "pending":
-                _bs_write(ml_dir, "running")
-                run_in_background(build_single_timestep_ondemand, app, ts.id)
-    except Exception:
-        pass  # never crash the endpoint

@@ -54,6 +54,153 @@ def _run_prediction_stage(event, ts, study, fire_state, predictor, threshold, pr
         _write_status(ml_dir, "failed")
 
 
+def _json_scalar(value):
+    """Convert pandas/numpy scalar values into JSON-safe Python values."""
+    if value is None or (not isinstance(value, (list, dict)) and pd.isna(value)):
+        return None
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    return value.item() if hasattr(value, "item") else value
+
+
+def _export_thermal_observations(study, t1: pd.Timestamp, out_path: Path):
+    """Export enriched FIRMS detections for one monitoring observation time."""
+    from pipeline.predict.risk_zones import write_geojson
+
+    enriched_path = study.data_processed_dir / "thermal" / "firms_enriched.parquet"
+    history_path = study.data_processed_dir / "thermal" / "firms_history.parquet"
+    source_path = enriched_path if enriched_path.exists() else history_path
+    if not source_path.exists():
+        raise FileNotFoundError(f"thermal FIRMS observations not found: {source_path}")
+
+    observations = pd.read_parquet(source_path)
+    observations["observed_at"] = pd.to_datetime(observations["observed_at"], utc=True)
+    target = pd.Timestamp(t1)
+    target = target.tz_localize("UTC") if target.tzinfo is None else target.tz_convert("UTC")
+    subset = observations[observations["observed_at"].eq(target)].copy()
+
+    property_columns = (
+        "observed_at", "acq_date", "acq_time", "satellite", "instrument",
+        "source_product", "confidence", "daynight", "frp", "bright_ti4",
+        "bright_ti5", "inside_midc", "inside_industrial_polygon",
+        "near_industrial_facility", "distance_to_midc_m",
+        "distance_to_nearest_industry_m", "nearest_industry_type",
+        "nearest_industry_name", "landcover_class", "landcover_group",
+        "is_built_up", "is_forest", "is_cropland",
+    )
+    features = []
+    for _, row in subset.iterrows():
+        properties = {
+            column: _json_scalar(row.get(column))
+            for column in property_columns
+            if column in subset.columns
+        }
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [float(row["longitude"]), float(row["latitude"])],
+            },
+            "properties": properties,
+        })
+    write_geojson(out_path, features)
+    return subset
+
+
+def _run_thermal_monitoring_stage(event, ts, study) -> None:
+    """Export observed thermal data without invoking the wildfire classifier."""
+    from pipeline.check.builder_slots import _write_status
+    from pipeline.predict.risk_zones import write_geojson
+    import traceback
+
+    ts_base = _timestep_dir(event.id, event.year, ts.slot_time)
+    ml_dir = ts_base / "prediction" / "ML"
+    wd_dir = ts_base / "prediction" / "wind_driven"
+    hs_path = ts_base / "hotspot" / "hotspots.geojson"
+    perimeter_path = ts_base / "perimeter" / "perimeter.geojson"
+
+    _write_status(ml_dir, "running")
+    _write_status(wd_dir, "pending")
+    try:
+        t1 = pd.Timestamp(ts.nearest_t1)
+        if t1.tzinfo is not None:
+            t1 = t1.tz_localize(None)
+
+        hs_path.parent.mkdir(parents=True, exist_ok=True)
+        observations = _export_thermal_observations(study, t1, hs_path)
+
+        perimeter_path.parent.mkdir(parents=True, exist_ok=True)
+        if not perimeter_path.exists():
+            write_geojson(perimeter_path, [])
+
+        ml_dir.mkdir(parents=True, exist_ok=True)
+        for horizon in (3, 6, 12):
+            risk_path = ml_dir / f"risk_zones_{horizon}h.geojson"
+            if not risk_path.exists():
+                write_geojson(risk_path, [])
+
+        frp = pd.to_numeric(
+            observations.get("frp", pd.Series(index=observations.index, dtype=float)),
+            errors="coerce",
+        )
+        brightness = pd.to_numeric(
+            observations.get("bright_ti4", pd.Series(index=observations.index, dtype=float)),
+            errors="coerce",
+        )
+        count_true = lambda column: int(observations.get(column, pd.Series(dtype=bool)).fillna(False).astype(bool).sum())
+        value_counts = lambda column: {
+            str(key): int(value)
+            for key, value in observations.get(column, pd.Series(dtype="string")).dropna().value_counts().items()
+        }
+        context = {
+            "analysis_mode": "thermal_monitoring",
+            "classification": {
+                "status": "not_configured",
+                "message": "Wildfire LR prediction is not applied to industrial thermal detections.",
+            },
+            "fire": {
+                "burned_area_km2": None,
+                "new_area_km2": None,
+                "growth_rate_km2h": None,
+                "n_hotspots": len(observations),
+                "frp_sum": round(float(frp.fillna(0).sum()), 3),
+            },
+            "thermal": {
+                "detection_count": len(observations),
+                "frp_mean_mw": round(float(frp.mean()), 3) if frp.notna().any() else None,
+                "frp_max_mw": round(float(frp.max()), 3) if frp.notna().any() else None,
+                "brightness_ti4_max_k": round(float(brightness.max()), 2) if brightness.notna().any() else None,
+                "inside_midc_count": count_true("inside_midc"),
+                "inside_industrial_area_count": count_true("inside_industrial_polygon"),
+                "near_industrial_facility_count": count_true("near_industrial_facility"),
+                "confidence_counts": value_counts("confidence"),
+                "landcover_group_counts": value_counts("landcover_group"),
+                "satellites": sorted(str(value) for value in observations.get(
+                    "satellite", pd.Series(dtype="string"),
+                ).dropna().unique()),
+                "nearest_industries": sorted(str(value) for value in observations.get(
+                    "nearest_industry_name", pd.Series(dtype="string"),
+                ).dropna().unique()),
+            },
+            "fwi_t1": {},
+            "observation_time": t1.isoformat(),
+        }
+        (ml_dir / "fire_context.json").write_text(
+            json.dumps(context, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        _write_status(ml_dir, "done")
+        log.info(
+            "[thermal] ts=%d exported %d observed hotspot(s); classifier skipped",
+            ts.id,
+            len(observations),
+        )
+    except Exception as exc:
+        log.error("[thermal] ts=%d failed: %s", ts.id, exc)
+        traceback.print_exc()
+        _write_status(ml_dir, "failed")
+
+
 def _run_weather_stage(event, ts, study, pbar=None) -> None:
     from pipeline.weather import build_weather_forecast
     from tqdm import tqdm

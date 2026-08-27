@@ -70,6 +70,12 @@ class FireEvent(db.Model):
 
 class EventTimestep(db.Model):
     __tablename__ = "event_timesteps"
+    __table_args__ = (
+        db.UniqueConstraint(
+            "event_id", "slot_time", name="uq_event_timesteps_event_slot"
+        ),
+    )
+
     id         = db.Column(db.Integer, primary_key=True)
     event_id   = db.Column(db.Integer, db.ForeignKey("fire_events.id"), nullable=False)
 

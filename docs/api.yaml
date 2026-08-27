@@ -62,11 +62,52 @@ components:
         start_date:  { type: string,  format: date, example: "2016-05-01" }
         end_date:    { type: string,  format: date, nullable: true, example: "2016-05-15" }
         description: { type: string,  example: "Largest wildfire evacuation in Alberta history" }
+        analysis_mode:
+          type: string
+          enum: [wildfire_prediction, thermal_monitoring]
         bbox:
           type: array
           description: "[minLon, minLat, maxLon, maxLat] in WGS84"
           items: { type: number }
           example: [-112.634, 56.157, -110.002, 57.380]
+
+    ThermalHistoryMetadata:
+      type: object
+      properties:
+        event_id:                  { type: integer, example: 2 }
+        data_available:            { type: boolean, example: true }
+        observation_count:         { type: integer, example: 42 }
+        first_observed_at:         { type: string, format: date-time, nullable: true }
+        last_observed_at:          { type: string, format: date-time, nullable: true }
+        current_observation_count: { type: integer, example: 1 }
+        current_observation_date:  { type: string, format: date, nullable: true }
+        duplicates_removed:        { type: integer, example: 3 }
+        raw_file_count:            { type: integer, example: 146 }
+        source_products:
+          type: array
+          items: { type: string }
+        requested_start_date:      { type: string, format: date, nullable: true }
+        requested_end_date:        { type: string, format: date, nullable: true }
+
+    ThermalContextMetadata:
+      type: object
+      description: Descriptive geospatial enrichment coverage; never a classification result.
+      properties:
+        event_id:                           { type: integer, example: 2 }
+        data_available:                     { type: boolean, example: true }
+        observation_count:                  { type: integer, example: 78 }
+        inside_midc_count:                  { type: integer }
+        inside_industrial_area_count:       { type: integer }
+        near_industrial_facility_count:     { type: integer }
+        industrial_context_available_count: { type: integer }
+        near_distance_threshold_m:          { type: number, example: 1000 }
+        landcover_group_counts:
+          type: object
+          additionalProperties: { type: integer }
+        classification_available:           { type: boolean, enum: [false] }
+        classification_note:                { type: string }
+        industrial_sources:                 { type: object }
+        landcover_source:                   { type: object }
 
     # ── Timesteps ─────────────────────────────────────────────────────────────
 
@@ -534,6 +575,81 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/FireEvent' }
         404: { description: Event not found }
+
+  /api/events/{event_id}/thermal/history:
+    get:
+      summary: Get normalized historical FIRMS coverage for a thermal-monitoring event
+      parameters:
+        - { name: event_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        200:
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ThermalHistoryMetadata' }
+        404: { description: Event not found }
+        409: { description: Thermal history is not configured for this event }
+
+  /api/events/{event_id}/thermal/context:
+    get:
+      summary: Get aggregate industrial and land-cover enrichment coverage
+      parameters:
+        - { name: event_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        200:
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ThermalContextMetadata' }
+        404: { description: Event not found }
+        409: { description: Thermal context is not configured for this event }
+
+  /api/events/{event_id}/thermal/detections:
+    get:
+      summary: Get FIRMS detections enriched with industrial proximity and land cover
+      description: Returns descriptive context only; no source class or persistence label is assigned.
+      parameters:
+        - { name: event_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        200:
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GeoJsonFeatureCollection' }
+        404: { description: Event not found }
+        409: { description: Thermal context is not configured for this event }
+
+  /api/events/{event_id}/layers/midc:
+    get:
+      summary: Get authoritative MIDC industrial-area boundaries for the event
+      parameters:
+        - { name: event_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        200:
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GeoJsonFeatureCollection' }
+        404: { description: Event not found }
+        409: { description: MIDC context is not configured for this event }
+
+  /api/events/{event_id}/layers/industrial-areas:
+    get:
+      summary: Get cached OpenStreetMap industrial land-use polygons
+      parameters:
+        - { name: event_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        200:
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GeoJsonFeatureCollection' }
+
+  /api/events/{event_id}/layers/industrial-facilities:
+    get:
+      summary: Get cached OpenStreetMap factories, works, and power infrastructure
+      parameters:
+        - { name: event_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        200:
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GeoJsonFeatureCollection' }
 
   # ── Timesteps ─────────────────────────────────────────────────────────────
 

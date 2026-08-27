@@ -24,6 +24,7 @@ def setup_db(app) -> None:
         _migrate_event_timesteps(db)
         _migrate_users(db)        # must run before create_all (updates legacy auth schemas)
         db.create_all()
+        _ensure_event_timestep_unique_index(db)
         _migrate_field_reports(db)
         _migrate_fire_events(db)
         seed_db()
@@ -168,3 +169,32 @@ def _migrate_event_timesteps(db) -> None:
     with db.engine.connect() as conn:
         conn.execute(text("DROP TABLE event_timesteps CASCADE"))
         conn.commit()
+
+
+def _ensure_event_timestep_unique_index(db) -> None:
+    """Enforce one row per event/slot on existing PostgreSQL databases."""
+    from sqlalchemy import text
+
+    with db.engine.begin() as conn:
+        duplicate_count = conn.execute(text(
+            "SELECT COUNT(*) FROM event_timesteps AS newer "
+            "WHERE EXISTS ("
+            "SELECT 1 FROM event_timesteps AS older "
+            "WHERE older.event_id = newer.event_id "
+            "AND older.slot_time = newer.slot_time "
+            "AND older.id < newer.id)"
+        )).scalar_one()
+        if duplicate_count:
+            conn.execute(text(
+                "DELETE FROM event_timesteps AS newer "
+                "USING event_timesteps AS older "
+                "WHERE newer.event_id = older.event_id "
+                "AND newer.slot_time = older.slot_time "
+                "AND newer.id > older.id"
+            ))
+            print(f"[db] removed {duplicate_count} duplicate event timestep(s)")
+
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_event_timesteps_event_slot "
+            "ON event_timesteps (event_id, slot_time)"
+        ))

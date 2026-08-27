@@ -195,6 +195,7 @@ def run_prediction(event_id: int, ts_id: int):
         { "force": true }          — wipe existing outputs and re-run even if already done.
         { "crowd": true }          — run crowd-augmented prediction (ML_crowd/).
         { "crowd": true, "force": true } — wipe crowd outputs and re-run.
+        { "prefetch_next": true }  — after this timestep completes, prefetch only its successor.
     """
     result, err = _get_event_and_ts(event_id, ts_id)
     if err:
@@ -204,16 +205,27 @@ def run_prediction(event_id: int, ts_id: int):
     body  = request.get_json(silent=True) or {}
     force = bool(body.get("force"))
     crowd = bool(body.get("crowd"))
+    prefetch_next = bool(body.get("prefetch_next"))
 
     from utils.background import run_in_background
     app = current_app._get_current_object()
 
     # ── Crowd prediction branch ───────────────────────────────────────────────
     if crowd:
+        from pipeline.event_config import uses_wildfire_model
+        if not uses_wildfire_model(event):
+            return jsonify({
+                "error": "crowd wildfire prediction is not configured for this event",
+            }), 409
+
         base     = _ts_base(event.id, event.year, ts.slot_time)
         crow_dir = base / "prediction" / "ML_crowd"
         sp_crowd = base / "spatial_analysis_crowd"
         crow_st  = _read_status(crow_dir)
+        sp_crowd_st = _read_status(sp_crowd)
+
+        if force and (crow_st == "running" or sp_crowd_st == "running"):
+            return jsonify({"status": "running"})
 
         if force and crow_st == "done":
             import shutil, os, stat
@@ -231,10 +243,13 @@ def run_prediction(event_id: int, ts_id: int):
                         pass
             crow_st = "pending"
 
-        if crow_st == "running":
+        if crow_st == "done":
+            return jsonify({"status": "done"})
+
+        from pipeline.check.builder_slots import _try_mark_running
+        if crow_st == "running" or not _try_mark_running(crow_dir):
             return jsonify({"status": "running"})
 
-        _write_status(crow_dir, "running")
         from pipeline.check.builder import build_single_timestep_ondemand_crowd
         run_in_background(build_single_timestep_ondemand_crowd, app, ts_id)
         return jsonify({"status": "running"})
@@ -242,7 +257,13 @@ def run_prediction(event_id: int, ts_id: int):
     # ── Standard prediction branch ────────────────────────────────────────────
     base   = _ts_base(event.id, event.year, ts.slot_time)
     ml_dir = base / "prediction" / "ML"
+    sp_dir = base / "spatial_analysis"
     ml_st  = _read_status(ml_dir)
+    sp_st  = _read_status(sp_dir)
+
+    if force and (ml_st == "running" or sp_st == "running"):
+        stage = "prediction" if ml_st == "running" else "spatial_analysis"
+        return jsonify({"status": "running", "stage": stage})
 
     if force and ml_st == "done":
         _wipe_prediction_outputs(event, ts)
@@ -250,16 +271,14 @@ def run_prediction(event_id: int, ts_id: int):
 
     # Auto-heal: STATUS says done but files missing
     _reset_ts_if_files_missing(event, ts)
-    ml_st = _read_status(ml_dir)
 
-    if ml_st in ("done", "running"):
-        return jsonify({"status": ml_st})
-
-    _write_status(ml_dir, "running")
-
-    from pipeline.check.builder import build_single_timestep_ondemand
-    run_in_background(build_single_timestep_ondemand, app, ts_id)
-    return jsonify({"status": "running"})
+    from pipeline.check.builder import start_timestep_build
+    state, stage = start_timestep_build(
+        app, event, ts, prefetch_next=prefetch_next,
+    )
+    if state == "cached":
+        return jsonify({"status": "done"})
+    return jsonify({"status": "running", "stage": stage})
 
 
 def _wipe_prediction_outputs(event, ts) -> None:
@@ -324,7 +343,7 @@ def build_all_predictions(event_id: int):
 
     def _generate():
         from pipeline.check.builder import (
-            _get_event_assets, _load_predictor, _load_threshold, _build_timestep,
+            _get_build_runtime, _build_timestep,
         )
 
         timesteps = (
@@ -344,9 +363,7 @@ def build_all_predictions(event_id: int):
         yield f"data: {_json.dumps({'total': total, 'done': 0, 'status': 'loading'})}\n\n"
 
         try:
-            assets    = _get_event_assets(event)
-            predictor = _load_predictor()
-            threshold = _load_threshold()
+            assets, predictor, threshold = _get_build_runtime(event)
         except Exception as exc:
             _log.error("[build-all] setup failed: %s", exc)
             yield f"data: {_json.dumps({'error': str(exc), 'status': 'error'})}\n\n"

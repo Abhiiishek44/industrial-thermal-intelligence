@@ -12,10 +12,6 @@
   }
 
   const TILES = {
-    dark:      { url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-                 attr: '&copy; OSM &copy; CARTO' },
-    light:     { url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-                 attr: '&copy; OSM &copy; CARTO' },
     satellite: { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
                  attr: '&copy; Esri' },
     topo:      { url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
@@ -80,7 +76,7 @@
       this.map = L.map(containerId, { zoomControl: false, attributionControl: true });
       L.control.zoom({ position: 'bottomright' }).addTo(this.map);
 
-      this._baseTile = L.tileLayer(TILES.dark.url, { attribution: TILES.dark.attr, maxZoom: 18 }).addTo(this.map);
+      this._baseTile = L.tileLayer(TILES.osm.url, { attribution: TILES.osm.attr, maxZoom: 19 }).addTo(this.map);
 
       // GIBS VIIRS thermal anomalies (real-time FIRMS-like)
       this._firmsTile = L.tileLayer(FIRMS_TILES.url, {
@@ -102,8 +98,6 @@
 
     setTheme(dark) {
       this._dark = dark;
-      const t = dark ? TILES.dark : TILES.light;
-      this._baseTile.setUrl(t.url);
     }
 
     renderFirms(fc) {
@@ -185,13 +179,11 @@
       this.map.getPane('sentinelPane').style.zIndex = 250;
 
       this._baseTiles = {
-        'Dark':      L.tileLayer(TILES.dark.url,      { attribution: TILES.dark.attr,      maxZoom: 18 }),
-        'Light':     L.tileLayer(TILES.light.url,     { attribution: TILES.light.attr,     maxZoom: 18 }),
+        'OSM':       L.tileLayer(TILES.osm.url,       { attribution: TILES.osm.attr,       maxZoom: 19 }),
         'Satellite': L.tileLayer(TILES.satellite.url, { attribution: TILES.satellite.attr, maxZoom: 18 }),
         'Topo':      L.tileLayer(TILES.topo.url,      { attribution: TILES.topo.attr,      maxZoom: 17 }),
-        'OSM':       L.tileLayer(TILES.osm.url,       { attribution: TILES.osm.attr,       maxZoom: 19 }),
       };
-      this._baseTile = this._baseTiles['Dark'];
+      this._baseTile = this._baseTiles['OSM'];
       this._baseTile.addTo(this.map);
       this.map.setView([56.5, -111.5], 8);
 
@@ -242,7 +234,7 @@
       }).addTo(this.map);
       this._basemapControl.getContainer().classList.add('basemap-control');
 
-      this._darkBase     = true;   // tracks whether current basemap is dark
+      this._darkBase     = false;  // OSM is the default light basemap
       this._roadsGeoJSON = null;   // cached for re-render on basemap change
 
       this.map.on('baselayerchange', (e) => {
@@ -272,8 +264,6 @@
 
     setTheme(dark) {
       this._dark = dark;
-      const t = dark ? TILES.dark : TILES.light;
-      this._baseTile.setUrl(t.url);
     }
 
     setSatelliteDate(dateStr) {

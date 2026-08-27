@@ -19,6 +19,7 @@
   let _replaySpeed        = 1;      // clock multiplier: 1 or 60
   let _isAdmin            = false;  // set after authentication
   let _syncPushInterval   = null;   // admin: pushes virtual time to server every 10s
+  let _initialReplayFloor = null;   // protects the richer event-1 default from a stale saved clock
 
   // ── Boot ─────────────────────────────────────────────────────────────────────
 
@@ -158,6 +159,7 @@
 
   async function openEvent(ev, fromPopstate) {
     currentEvent = ev;
+    _applyAnalysisMode(ev);
     if (!fromPopstate) history.pushState({ eventId: ev.id }, '', '/demo?event_id=' + ev.id);
 
     document.getElementById('breadcrumb').textContent = ev.name + ' · ' + ev.year;
@@ -183,7 +185,8 @@
     // Sync replay clock with server
     // Both admin and non-admin pull once on load to restore saved position.
     window.API.getReplayTime(ev.id).then(function(d) {
-      if (d.ms && _timestepsDone.length) {
+      if (d.ms && _timestepsDone.length && (!_initialReplayFloor || d.ms >= _initialReplayFloor)) {
+        _initialReplayFloor = null;
         _replayVirtualTime = d.ms;
         _devApplyReplayTime();
       }
@@ -202,6 +205,8 @@
       var _syncRef = null; // {ms, pushed_at, speed}
       function _applySyncRef(d) {
         if (!d || !d.ms || !d.pushed_at) return;
+        if (_initialReplayFloor && d.ms < _initialReplayFloor) return;
+        _initialReplayFloor = null;
         _syncRef = d;
       }
       function _syncTick() {
@@ -248,6 +253,32 @@
     }
   }
 
+  function _applyAnalysisMode(ev) {
+    var thermal = ev && ev.analysis_mode === 'thermal_monitoring';
+    var predTitle = document.getElementById('pred-type-title');
+    var predSection = document.getElementById('pred-type-section');
+    if (predTitle) predTitle.style.display = thermal ? 'none' : '';
+    if (predSection) predSection.style.display = thermal ? 'none' : '';
+
+    var dashboardTitle = document.querySelector('#bottom-header .bottom-title');
+    if (dashboardTitle) {
+      dashboardTitle.textContent = thermal ? 'Thermal Monitoring Dashboard' : 'Situation Dashboard';
+    }
+
+    var legend = document.getElementById('event-legend');
+    if (!legend) return;
+    legend.innerHTML = thermal
+      ? '<div class="leg-row"><span class="leg-swatch" style="background:#ff6600;opacity:.8"></span>Thermal detection</div>' +
+        '<div class="leg-row"><span class="leg-line" style="background:#cc0000"></span>Road near detection</div>' +
+        '<div class="leg-row"><span class="leg-line" style="background:#44dd44"></span>Monitored road</div>'
+      : '<div class="leg-row"><span class="leg-swatch" style="background:#cc2200;opacity:.7"></span>Fire perimeter</div>' +
+        '<div class="leg-row" id="legend-risk-row"><span class="leg-swatch" style="background:#ff2222;opacity:.7"></span>High risk zone (ML)</div>' +
+        '<div class="leg-row" id="legend-actual-row" style="display:none"><span class="leg-swatch" style="background:#888;opacity:.5;border:1px dashed #aaa"></span>Actual perimeter</div>' +
+        '<div class="leg-row"><span class="leg-line" style="background:#cc0000"></span>Burned road</div>' +
+        '<div class="leg-row"><span class="leg-line" style="background:#ff8c00"></span>At-risk road</div>' +
+        '<div class="leg-row"><span class="leg-line" style="background:#44dd44"></span>Clear road</div>';
+  }
+
   // ── Timesteps ─────────────────────────────────────────────────────────────────
 
   async function loadTimesteps(eventId) {
@@ -265,11 +296,21 @@
     // Use all slots (pending ones trigger on-demand build when selected)
     const done = timesteps;
     _timestepsDone  = done;
-    _currentTsIndex = 0;
     if (!done.length) {
       container.innerHTML = '<div class="empty-msg">No timesteps yet</div>';
       return;
     }
+
+    // Event 1 is more representative late in its progression. Select the
+    // latest real May 10–11 row whose source overpass is no more than 1h old.
+    var initialIdx = 0;
+    if (+eventId === 1) {
+      done.forEach(function(ts, idx) {
+        var day = (ts.slot_time || '').slice(0, 10);
+        if (day >= '2016-05-10' && day <= '2016-05-11' && ts.gap_hours <= 1) initialIdx = idx;
+      });
+    }
+    _currentTsIndex = initialIdx;
 
     const tickBar = done.map(function(ts) {
       let cls = ts.prediction_status !== 'done' ? 'pending'
@@ -282,7 +323,7 @@
       '<div class="ts-slider-wrap">' +
         '<div class="ts-status-bar" id="ts-tick-bar">' + tickBar + '</div>' +
         '<div class="ts-label-row">' +
-          '<span id="ts-label">' + fmtDateTime(done[0].slot_time) + '</span>' +
+          '<span id="ts-label">' + fmtDateTime(done[initialIdx].slot_time) + '</span>' +
           '<span id="ts-live-badge" class="ts-live-badge">● LIVE</span>' +
         '</div>' +
         '<div class="ts-meta-row">' +
@@ -301,14 +342,15 @@
         '</div>' +
       '</div>';
 
-    setGapBadge(done[0]);
-    _highlightTick(0);
+    setGapBadge(done[initialIdx]);
+    _highlightTick(initialIdx);
 
     // ── Virtual real-time clock ───────────────────────────────────────────────
     // Uses module-level _replayVirtualTime, _replayIdx, _replaySpeed so DEV
     // controls can jump/speed the clock without touching each other's state.
-    _replayVirtualTime = new Date(done[0].slot_time).getTime();
-    _replayIdx = 0;
+    _replayVirtualTime = new Date(done[initialIdx].slot_time).getTime();
+    _replayIdx = initialIdx;
+    _initialReplayFloor = +eventId === 1 ? _replayVirtualTime : null;
     var _replayInterval = null;
 
     function stopPlay() {
@@ -350,7 +392,7 @@
       }, 1000);
     }
 
-    selectTimestep(done[0]);
+    selectTimestep(done[initialIdx]);
     startPlay();
   }
 
@@ -465,8 +507,8 @@
     if (section) section.style.display = '';
     if (titleEl) titleEl.style.display = '';
     var slider = document.getElementById('fcast-slider');
-    if (slider) { slider.value = 0; }
-    _setForecastHour(0);
+    if (slider) { slider.value = 3; }
+    _setForecastHour(3);
   }
 
   function _hideForecastSlider() {
@@ -522,6 +564,21 @@
         var s = await window.API.getTsStatus(currentEvent.id, ts.id);
         var idx = _timestepsDone.findIndex(function(t) { return t.id === ts.id; });
 
+        var failed = s.prediction_status === 'failed' || s.spatial_analysis_status === 'failed';
+        if (failed) {
+          clearInterval(_pollIntervals[ts.id]);
+          delete _pollIntervals[ts.id];
+          if (idx >= 0) {
+            _timestepsDone[idx].prediction_status       = s.prediction_status;
+            _timestepsDone[idx].spatial_analysis_status = s.spatial_analysis_status;
+          }
+          _hidePredStatus();
+          showToast(s.spatial_analysis_status === 'failed' ?
+            'Spatial analysis failed. Retry the timestep to try again.' :
+            'Prediction failed. Retry the timestep to try again.', 'error');
+          return;
+        }
+
         // Keep status bar visible while any stage is still running
         if (_currentTsIndex === idx && (s.prediction_status !== 'done' || s.spatial_analysis_status !== 'done')) {
           _showPredStatus();
@@ -540,7 +597,7 @@
             if (_currentTsIndex === idx) {
               _hidePredStatus();
               _crowdMode = false;  // standard prediction completed — revert to normal layers
-              selectTimestep(_timestepsDone[idx]);
+              selectTimestep(_timestepsDone[idx], false);
             }
           }
         }
@@ -548,7 +605,7 @@
     }, 2000);
   }
 
-  async function selectTimestep(ts) {
+  async function selectTimestep(ts, notifyBackend) {
     if (!currentEvent) return;
     const eid  = currentEvent.id;
     const tsid = ts.id;
@@ -568,12 +625,26 @@
       }
     });
 
-    // Show status bar and trigger/poll if not fully done
-    if (ts.prediction_status !== 'done' || ts.spatial_analysis_status !== 'done') {
-      _showPredStatus();
-      if (ts.prediction_status === 'pending') {
-        window.API.runPredictionStep(eid, tsid).catch(function() {});
-      }
+    // Selecting a timestep always notifies the backend. Completed outputs stay
+    // cached; unfinished stages are atomically claimed and built on demand.
+    var timestepDone = ts.prediction_status === 'done' && ts.spatial_analysis_status === 'done';
+    if (notifyBackend !== false) {
+      window.API.runPredictionStep(eid, tsid).catch(function(err) {
+        if (timestepDone) return;
+        clearInterval(_pollIntervals[tsid]);
+        delete _pollIntervals[tsid];
+        _hidePredStatus();
+        showToast('Build failed to start: ' + (err.message || 'unknown error'), 'error');
+      });
+    }
+
+    // Show status bar and poll only while this timestep is unfinished.
+    if (!timestepDone) {
+      var retrySpatial = ts.prediction_status === 'done' && ts.spatial_analysis_status === 'failed';
+      var buildLabel = currentEvent.analysis_mode === 'thermal_monitoring'
+        ? 'Building thermal monitoring view…'
+        : 'Building prediction…';
+      _showPredStatus(retrySpatial ? 'Retrying spatial analysis…' : buildLabel);
       _pollUntilDone(ts);
     } else {
       _hidePredStatus();
@@ -1217,8 +1288,10 @@
 
 
   // Shift the replay clock by deltaMs, snap _replayIdx to the correct timestep.
-  function _showPredStatus() {
+  function _showPredStatus(message) {
     var bar = document.getElementById('prediction-status-bar');
+    var text = document.getElementById('prediction-status-text');
+    if (text) text.textContent = message || 'Building prediction…';
     if (bar) bar.classList.remove('hidden');
   }
 

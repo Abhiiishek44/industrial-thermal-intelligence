@@ -20,7 +20,7 @@ from pipeline.check.builder_slots import (
 )
 from pipeline.check.builder_stages import (
     _run_prediction_stage, _run_weather_stage, _run_spatial_stage,
-    _run_perimeter_stage,
+    _run_perimeter_stage, _run_thermal_monitoring_stage,
 )
 
 log = logging.getLogger(__name__)
@@ -108,6 +108,8 @@ _event_cache_lock = _threading.Lock()
 _predictor_cache: dict = {}   # model_name → WildfirePredictor
 _predictor_lock  = _threading.Lock()
 _threshold_cache: list = []   # [value]  (list so we can mutate it)
+_next_prefetch_requested: set[int] = set()
+_next_prefetch_lock = _threading.Lock()
 
 
 def _load_study(event):
@@ -135,7 +137,7 @@ def _load_fire_state(study):
 
 def _load_predictor():
     import wildfire_hotspot_prediction as whp
-    key = "lr_steps"
+    key = "lr"
     with _predictor_lock:
         if key not in _predictor_cache:
             _predictor_cache[key] = whp.WildfirePredictor(models_dir=_MODELS_DIR, model_name=key)
@@ -153,22 +155,37 @@ def _get_event_assets(event):
     """Return cached (study, fire_state, pred_cache, ap_cache, ros_cache) for event.
     Loads from disk on first call, returns cached objects thereafter.
     """
-    import wildfire_hotspot_prediction as whp
+    from pipeline.event_config import uses_wildfire_model
     from pipeline.check.builder_stages import _load_actual_perimeter_cache, _load_ros_weights_cache
 
     with _event_cache_lock:
         if event.id not in _event_cache:
-            study      = _load_study(event)
-            fire_state = _load_fire_state(study)
-            pred_cache = whp.build_prediction_cache(study)
-            ap_cache   = _load_actual_perimeter_cache(event)
-            ros_cache  = _load_ros_weights_cache(study)
-            _event_cache[event.id] = dict(
-                study=study, fire_state=fire_state, pred_cache=pred_cache,
-                ap_cache=ap_cache, ros_cache=ros_cache,
+            study = _load_study(event)
+            assets = dict(
+                study=study, fire_state=None, pred_cache=None,
+                ap_cache=None, ros_cache=None,
             )
+            if uses_wildfire_model(event):
+                import wildfire_hotspot_prediction as whp
+                assets.update(
+                    fire_state=_load_fire_state(study),
+                    pred_cache=whp.build_prediction_cache(study),
+                    ap_cache=_load_actual_perimeter_cache(event),
+                    ros_cache=_load_ros_weights_cache(study),
+                )
+            _event_cache[event.id] = assets
             log.info("[builder] event %d assets loaded and cached", event.id)
         return _event_cache[event.id]
+
+
+def _get_build_runtime(event):
+    """Load only the runtime components selected by the event profile."""
+    from pipeline.event_config import uses_wildfire_model
+
+    assets = _get_event_assets(event)
+    if not uses_wildfire_model(event):
+        return assets, None, None
+    return assets, _load_predictor(), _load_threshold()
 
 
 # ── Per-event orchestration ───────────────────────────────────────────────────
@@ -188,16 +205,16 @@ def build_playback_events() -> None:
 def _build_event(event) -> None:
     log.info("[builder] building event %d: %s", event.id, event.name)
     try:
-        assets    = _get_event_assets(event)
-        predictor = _load_predictor()
-        threshold = _load_threshold()
+        assets, predictor, threshold = _get_build_runtime(event)
     except Exception as e:
         log.error("[builder] event %d setup failed: %s", event.id, e)
         return
 
-    steps     = sorted(assets["fire_state"].steps)
-    slots     = _generate_slots(event)
-    timesteps = _upsert_timesteps(event.id, slots, steps)
+    steps = _load_observation_steps(event, assets["study"], assets["fire_state"])
+    slots, prune_missing = _playback_slots(event, steps)
+    timesteps = _upsert_timesteps(
+        event.id, slots, steps, prune_missing=prune_missing,
+    )
     print(f"[builder] {event.name}: {len(slots)} slots, {len(steps)} overpasses")
 
     from tqdm import tqdm
@@ -227,14 +244,15 @@ def _build_event(event) -> None:
         pool.shutdown(wait=False)
 
 
-def _build_timestep(event, ts, assets: dict, predictor, threshold, pbar=None) -> None:
-    from pipeline.check.builder_slots import _read_status, _write_status
+def _build_timestep(
+    event, ts, assets: dict, predictor, threshold, pbar=None, ml_claimed: bool = False,
+) -> None:
+    from pipeline.check.builder_slots import _read_status, _try_mark_running
 
-    study      = assets["study"]
-    fire_state = assets["fire_state"]
-    pred_cache = assets["pred_cache"]
-    ap_cache   = assets["ap_cache"]
-    ros_cache  = assets["ros_cache"]
+    from pipeline.event_config import uses_wildfire_model
+
+    study = assets["study"]
+    wildfire_mode = uses_wildfire_model(event)
 
     ts_str  = pd.Timestamp(ts.slot_time).strftime("%Y-%m-%dT%H%M")
     ts_base = _DATA_DIR / "events" / f"{event.year}_{event.id:04d}" / "timesteps" / ts_str
@@ -243,17 +261,29 @@ def _build_timestep(event, ts, assets: dict, predictor, threshold, pbar=None) ->
 
     print(f"[build_timestep] ts={ts.id} ({ts_str}) — weather…")
     _run_weather_stage(event, ts, study, pbar)
-    print(f"[build_timestep] ts={ts.id} — perimeter…")
-    _run_perimeter_stage(event, ts, study, fire_state, ap_cache, ros_cache)
+    if wildfire_mode:
+        print(f"[build_timestep] ts={ts.id} — perimeter…")
+        _run_perimeter_stage(
+            event, ts, study, assets["fire_state"],
+            assets["ap_cache"], assets["ros_cache"],
+        )
 
     ml_st = _read_status(ml_dir)
     print(f"[build_timestep] ts={ts.id} — ml_status={ml_st}")
-    if ml_st not in ("done", "failed"):
-        print(f"[build_timestep] ts={ts.id} — running prediction…")
-        _run_prediction_stage(event, ts, study, fire_state, predictor, threshold, pred_cache, pbar)
+    if ml_st != "done" and (ml_claimed or _try_mark_running(ml_dir)):
+        if wildfire_mode:
+            print(f"[build_timestep] ts={ts.id} — running prediction…")
+            _run_prediction_stage(
+                event, ts, study, assets["fire_state"], predictor,
+                threshold, assets["pred_cache"], pbar,
+            )
+        else:
+            print(f"[build_timestep] ts={ts.id} — exporting thermal observations…")
+            _run_thermal_monitoring_stage(event, ts, study)
         print(f"[build_timestep] ts={ts.id} — prediction done, ml_status={_read_status(ml_dir)}")
 
-    if _read_status(ml_dir) == "done" and _read_status(sp_dir) not in ("done", "failed"):
+    if _read_status(ml_dir) == "done" and _read_status(sp_dir) != "done" \
+            and _try_mark_running(sp_dir):
         print(f"[build_timestep] ts={ts.id} — spatial analysis…")
         _run_spatial_stage(event, ts, pbar)
         print(f"[build_timestep] ts={ts.id} — spatial done")
@@ -288,22 +318,75 @@ def _build_selectors_parquet(study, fire_state) -> None:
     print(f"[builder] selectors.parquet — {len(rows)} overpasses → {out_path}")
 
 
+def _load_observation_steps(event, study, fire_state=None) -> list[pd.Timestamp]:
+    """Return source overpasses without constructing wildfire state for monitoring."""
+    from pipeline.event_config import uses_wildfire_model
+
+    if uses_wildfire_model(event):
+        fire_state = fire_state or _load_fire_state(study)
+        return sorted(fire_state.steps)
+
+    enriched_path = study.data_processed_dir / "thermal" / "firms_enriched.parquet"
+    history_path = study.data_processed_dir / "thermal" / "firms_history.parquet"
+    source_path = enriched_path if enriched_path.exists() else history_path
+    if not source_path.exists():
+        raise FileNotFoundError(f"thermal FIRMS observations not found: {source_path}")
+
+    observations = pd.read_parquet(source_path)
+    if "observed_at" not in observations.columns:
+        raise ValueError(f"observed_at missing from {source_path}")
+    observed_at = pd.to_datetime(observations["observed_at"], utc=True).dropna()
+    start = pd.Timestamp(event.start_date, tz="UTC")
+    end = pd.Timestamp(event.end_date, tz="UTC") + pd.Timedelta(days=1)
+    return sorted(pd.Timestamp(value) for value in observed_at[(observed_at >= start) & (observed_at < end)].unique())
+
+
+def _playback_slots(event, steps: list[pd.Timestamp]) -> tuple[list[pd.Timestamp], bool]:
+    """Use observation timestamps for monitoring and hourly slots for wildfire replay."""
+    from pipeline.event_config import uses_wildfire_model
+
+    if uses_wildfire_model(event):
+        return _generate_slots(event), False
+    return steps, True
+
+
+def build_event_timesteps(event) -> list:
+    """Persist the real observation-backed timestep grid for one replay event."""
+    from pipeline.event_config import uses_wildfire_model
+
+    study = _load_study(event)
+    fire_state = _load_fire_state(study) if uses_wildfire_model(event) else None
+    steps = _load_observation_steps(event, study, fire_state)
+    slots, prune_missing = _playback_slots(event, steps)
+    log.info(
+        "[builder] event %d generating timesteps from %d slots and %d overpasses",
+        event.id,
+        len(slots),
+        len(steps),
+    )
+    timesteps = _upsert_timesteps(
+        event.id, slots, steps, prune_missing=prune_missing,
+    )
+
+    if fire_state is not None:
+        try:
+            _build_selectors_parquet(study, fire_state)
+        except Exception as exc:
+            # Selectors accelerate prediction but are not required to expose slots.
+            log.warning("[builder] event %d selector generation failed: %s", event.id, exc)
+
+    return timesteps
+
+
 def build_slots_only() -> None:
     """Create EventTimestep DB rows and build selectors.parquet. No weather/perimeter here."""
     from db.models import FireEvent
     events = FireEvent.query.filter(FireEvent.end_date.isnot(None)).all()
     for event in events:
         try:
-            study      = _load_study(event)
-            fire_state = _load_fire_state(study)
-            slots      = _generate_slots(event)
-            steps      = sorted(fire_state.steps)
-            timesteps  = _upsert_timesteps(event.id, slots, steps)
-            print(f"[builder] {event.name}: {len(slots)} slots created")
-
-            _build_selectors_parquet(study, fire_state)
+            build_event_timesteps(event)
         except Exception as e:
-            log.error("[builder] build_slots_only event %d failed: %s", event.id, e)
+            log.exception("[builder] build_slots_only event %d failed: %s", event.id, e)
 
 
 def build_weather_perimeter() -> None:
@@ -313,18 +396,22 @@ def build_weather_perimeter() -> None:
     events = FireEvent.query.filter(FireEvent.end_date.isnot(None)).all()
     for event in events:
         try:
+            from pipeline.event_config import uses_wildfire_model
             study      = _load_study(event)
-            fire_state = _load_fire_state(study)
+            fire_state = _load_fire_state(study) if uses_wildfire_model(event) else None
             from pipeline.check.builder_slots import _generate_slots, _upsert_timesteps
-            slots     = _generate_slots(event)
-            steps     = sorted(fire_state.steps)
-            timesteps = _upsert_timesteps(event.id, slots, steps)
-            ap_cache  = _load_actual_perimeter_cache(event)
-            ros_cache = _load_ros_weights_cache(study)
+            steps     = _load_observation_steps(event, study, fire_state)
+            slots, prune_missing = _playback_slots(event, steps)
+            timesteps = _upsert_timesteps(
+                event.id, slots, steps, prune_missing=prune_missing,
+            )
+            ap_cache  = _load_actual_perimeter_cache(event) if fire_state is not None else None
+            ros_cache = _load_ros_weights_cache(study) if fire_state is not None else None
             print(f"[builder] {event.name}: building weather + perimeter for {len(timesteps)} slots…")
             for ts in timesteps:
                 _run_weather_stage(event, ts, study)
-                _run_perimeter_stage(event, ts, study, fire_state, ap_cache, ros_cache)
+                if fire_state is not None:
+                    _run_perimeter_stage(event, ts, study, fire_state, ap_cache, ros_cache)
             print(f"[builder] {event.name}: weather + perimeter ready")
         except Exception as e:
             log.error("[builder] build_weather_perimeter event %d failed: %s", event.id, e)
@@ -340,9 +427,11 @@ def build_priority_slots() -> None:
     events = FireEvent.query.filter(FireEvent.end_date.isnot(None)).all()
     for event in events:
         try:
-            assets    = _get_event_assets(event)
-            predictor = _load_predictor()
-            threshold = _load_threshold()
+            from pipeline.event_config import uses_wildfire_model
+            if not uses_wildfire_model(event):
+                log.info("[builder] priority build skipped for monitoring event %d", event.id)
+                continue
+            assets, predictor, threshold = _get_build_runtime(event)
         except Exception as e:
             log.error("[builder] priority build event %d setup failed: %s", event.id, e)
             continue
@@ -388,7 +477,117 @@ def build_priority_slots() -> None:
         print(f"[builder] {event.name}: priority slots done")
 
 
-# ── On-demand: single timestep ────────────────────────────────────────────────
+# ── On-demand: single timestep + one-step prefetch ───────────────────────────
+
+def _request_next_prefetch(ts_id: int) -> None:
+    with _next_prefetch_lock:
+        _next_prefetch_requested.add(ts_id)
+
+
+def _schedule_requested_prefetch(app, ts_id: int, *, complete: bool) -> None:
+    """Schedule the successor only when this timestep was explicitly selected."""
+    if not complete:
+        return
+
+    with _next_prefetch_lock:
+        if ts_id not in _next_prefetch_requested:
+            return
+        _next_prefetch_requested.discard(ts_id)
+
+    from utils.background import run_in_background
+    run_in_background(prefetch_next_timestep, app, ts_id)
+
+
+def start_timestep_build(app, event, ts, *, prefetch_next: bool = False) -> tuple[str, str | None]:
+    """Atomically start the unfinished stage for one timestep.
+
+    Returns ``(state, stage)`` where state is cached, started, or running.
+    """
+    from api.timesteps import _read_status
+    from pipeline.check.builder_slots import _try_mark_running
+    from utils.background import run_in_background
+
+    if prefetch_next:
+        _request_next_prefetch(ts.id)
+
+    ts_str = pd.Timestamp(ts.slot_time).strftime("%Y-%m-%dT%H%M")
+    base = _DATA_DIR / "events" / f"{event.year}_{event.id:04d}" / "timesteps" / ts_str
+    ml_dir = base / "prediction" / "ML"
+    sp_dir = base / "spatial_analysis"
+
+    # Retry once if a stage finishes between the status read and atomic claim.
+    for _ in range(2):
+        ml_st = _read_status(ml_dir)
+        sp_st = _read_status(sp_dir)
+
+        if ml_st == "done" and sp_st == "done":
+            _schedule_requested_prefetch(app, ts.id, complete=True)
+            return "cached", None
+
+        if ml_st == "done":
+            if sp_st == "running":
+                return "running", "spatial_analysis"
+            if _try_mark_running(sp_dir):
+                run_in_background(build_single_timestep_spatial_ondemand, app, ts.id)
+                return "started", "spatial_analysis"
+            continue
+
+        if ml_st == "running":
+            return "running", "prediction"
+        if _try_mark_running(ml_dir):
+            run_in_background(build_single_timestep_ondemand, app, ts.id)
+            return "started", "prediction"
+
+    return "running", "prediction"
+
+
+def prefetch_next_timestep(app, completed_ts_id: int) -> None:
+    """Prefetch exactly one successor without chaining to its successor."""
+    with app.app_context():
+        from db.connection import db
+        from db.models import EventTimestep, FireEvent
+        from api.timesteps import _read_status
+
+        completed = db.session.get(EventTimestep, completed_ts_id)
+        event = db.session.get(FireEvent, completed.event_id) if completed else None
+        if not completed or not event:
+            log.info("[prefetch] skipped after ts=%s: timestep/event missing", completed_ts_id)
+            return
+
+        ts_str = pd.Timestamp(completed.slot_time).strftime("%Y-%m-%dT%H%M")
+        base = _DATA_DIR / "events" / f"{event.year}_{event.id:04d}" / "timesteps" / ts_str
+        if (_read_status(base / "prediction" / "ML") != "done"
+                or _read_status(base / "spatial_analysis") != "done"):
+            log.info("[prefetch] skipped after ts=%d: source is not fully cached", completed.id)
+            return
+
+        next_ts = (
+            EventTimestep.query
+            .filter(
+                EventTimestep.event_id == completed.event_id,
+                EventTimestep.slot_time > completed.slot_time,
+            )
+            .order_by(EventTimestep.slot_time)
+            .first()
+        )
+        if next_ts is None:
+            log.info("[prefetch] skipped after ts=%d: no next timestep", completed.id)
+            return
+
+        state, stage = start_timestep_build(app, event, next_ts, prefetch_next=False)
+        if state == "cached":
+            log.info("[prefetch] next ts=%d already cached", next_ts.id)
+        elif state == "started":
+            log.info(
+                "[prefetch] started next ts=%d after ts=%d (%s)",
+                next_ts.id, completed.id, stage,
+            )
+        else:
+            log.info(
+                "[prefetch] skipped next ts=%d after ts=%d: %s already running",
+                next_ts.id, completed.id, stage,
+            )
+
 
 def build_single_timestep_ondemand(app, ts_id: int) -> None:
     """Run all pipeline stages for one timestep (background thread).
@@ -411,21 +610,27 @@ def build_single_timestep_ondemand(app, ts_id: int) -> None:
 
         ts_str  = pd.Timestamp(ts.slot_time).strftime("%Y-%m-%dT%H%M")
         print(f"[ondemand] ts={ts_id} slot={ts_str}")
-        ml_dir  = _DATA_DIR / "events" / f"{event.year}_{event.id:04d}" / "timesteps" / ts_str / "prediction" / "ML"
+        ts_base = _DATA_DIR / "events" / f"{event.year}_{event.id:04d}" / "timesteps" / ts_str
+        ml_dir  = ts_base / "prediction" / "ML"
+        sp_dir  = ts_base / "spatial_analysis"
         from pipeline.check.builder_slots import _read_status
         st = _read_status(ml_dir)
         if st == "done":
             print(f"[ondemand] ts={ts_id} already done — skip")
+            _schedule_requested_prefetch(
+                app, ts_id, complete=_read_status(sp_dir) == "done",
+            )
             return
 
         print(f"[ondemand] ts={ts_id} ml_status={st} — loading assets…")
         try:
-            assets    = _get_event_assets(event)
+            assets, predictor, threshold = _get_build_runtime(event)
             print(f"[ondemand] ts={ts_id} assets ready")
-            predictor = _load_predictor()
-            print(f"[ondemand] ts={ts_id} predictor ready")
-            threshold = _load_threshold()
-            print(f"[ondemand] ts={ts_id} threshold={threshold:.4f}")
+            if predictor is not None:
+                print(f"[ondemand] ts={ts_id} predictor ready")
+                print(f"[ondemand] ts={ts_id} threshold={threshold:.4f}")
+            else:
+                print(f"[ondemand] ts={ts_id} thermal monitoring mode — classifier skipped")
         except Exception as e:
             print(f"[ondemand] ts={ts_id} setup FAILED: {e}")
             log.error("[builder] ondemand ts %d setup failed: %s", ts_id, e)
@@ -433,10 +638,53 @@ def build_single_timestep_ondemand(app, ts_id: int) -> None:
             return
 
         print(f"[ondemand] ts={ts_id} entering _build_timestep…")
-        _build_timestep(event, ts, assets, predictor, threshold)
+        _build_timestep(event, ts, assets, predictor, threshold, ml_claimed=True)
+        _schedule_requested_prefetch(
+            app,
+            ts_id,
+            complete=_read_status(ml_dir) == "done" and _read_status(sp_dir) == "done",
+        )
         print(f"[ondemand] ts={ts_id} _build_timestep done — augmenting crowd…")
         _augment_with_crowd(event, ts_id)
         print(f"[ondemand] ts={ts_id} COMPLETE")
+
+
+def build_single_timestep_spatial_ondemand(app, ts_id: int) -> None:
+    """Retry only spatial analysis for a timestep with completed ML outputs."""
+    print(f"[spatial_ondemand] ts={ts_id} START")
+    with app.app_context():
+        from db.connection import db
+        from db.models import EventTimestep, FireEvent
+        from pipeline.check.builder_slots import _read_status, _write_status
+
+        ts = db.session.get(EventTimestep, ts_id)
+        event = db.session.get(FireEvent, ts.event_id) if ts else None
+        if not ts or not event:
+            print(f"[spatial_ondemand] ts={ts_id} timestep/event missing — abort")
+            return
+
+        ts_str  = pd.Timestamp(ts.slot_time).strftime("%Y-%m-%dT%H%M")
+        ts_base = _DATA_DIR / "events" / f"{event.year}_{event.id:04d}" / "timesteps" / ts_str
+        ml_dir  = ts_base / "prediction" / "ML"
+        sp_dir  = ts_base / "spatial_analysis"
+
+        if _read_status(ml_dir) != "done":
+            print(f"[spatial_ondemand] ts={ts_id} ML outputs are not done — abort")
+            _write_status(sp_dir, "failed")
+            return
+
+        if _read_status(sp_dir) == "done":
+            print(f"[spatial_ondemand] ts={ts_id} already done — skip")
+            _schedule_requested_prefetch(app, ts_id, complete=True)
+            return
+
+        _run_spatial_stage(event, ts)
+        _schedule_requested_prefetch(
+            app,
+            ts_id,
+            complete=_read_status(ml_dir) == "done" and _read_status(sp_dir) == "done",
+        )
+        print(f"[spatial_ondemand] ts={ts_id} COMPLETE status={_read_status(sp_dir)}")
 
 
 # ── On-demand: crowd-augmented prediction ────────────────────────────────────
@@ -468,6 +716,11 @@ def build_single_timestep_ondemand_crowd(app, ts_id: int) -> None:
         if not event:
             return
 
+        from pipeline.event_config import uses_wildfire_model
+        if not uses_wildfire_model(event):
+            print(f"[crowd] ts={ts_id} skipped — crowd wildfire prediction is not configured")
+            return
+
         ts_str   = pd.Timestamp(ts.slot_time).strftime("%Y-%m-%dT%H%M")
         ts_base  = _DATA_DIR / "events" / f"{event.year}_{event.id:04d}" / "timesteps" / ts_str
         ml_dir   = ts_base / "prediction" / "ML"
@@ -480,9 +733,7 @@ def build_single_timestep_ondemand_crowd(app, ts_id: int) -> None:
         if _read_status(ml_dir) != "done":
             print(f"[crowd] ts={ts_id} standard ML not done — running standard first…")
             try:
-                assets    = _get_event_assets(event)
-                predictor = _load_predictor()
-                threshold = _load_threshold()
+                assets, predictor, threshold = _get_build_runtime(event)
             except Exception as e:
                 print(f"[crowd] ts={ts_id} asset load failed: {e}")
                 _write_status(crow_dir, "failed")

@@ -15,6 +15,13 @@
     return Number(val).toLocaleString();
   }
 
+  function text(val) {
+    if (val == null || val === undefined || val === '') return '—';
+    return String(val).replace(/[&<>"']/g, function(ch) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+    });
+  }
+
   function fwiBar(label, value, max, color) {
     const pct = (value != null) ? Math.min(100, (value / max) * 100).toFixed(0) : 0;
     const display = (value != null) ? Number(value).toFixed(1) : '—';
@@ -49,6 +56,77 @@
       arrows + '</svg>';
   }
 
+  function renderThermalDashboard(el, fireCtx, weatherForecast) {
+    const fire = fireCtx.fire || {};
+    const thermal = fireCtx.thermal || {};
+    const wf = weatherForecast || [];
+    const landcover = thermal.landcover_group_counts || {};
+    const confidence = thermal.confidence_counts || {};
+    const industries = thermal.nearest_industries || [];
+
+    const countList = function(values) {
+      const entries = Object.keys(values).map(function(key) {
+        return text(key) + ': <b>' + vn(values[key]) + '</b>';
+      });
+      return entries.length ? entries.join('<br>') : '—';
+    };
+
+    el.innerHTML =
+      '<div class="dash-card">' +
+        '<div class="dash-card-title">Thermal detections</div>' +
+        '<table class="stat-table">' +
+          '<tr><td>Detections</td><td>' + v(thermal.detection_count != null ? thermal.detection_count : fire.n_hotspots, 0) + '</td></tr>' +
+          '<tr><td>FRP total</td><td>' + v(fire.frp_sum, 2, 'MW') + '</td></tr>' +
+          '<tr><td>FRP mean</td><td>' + v(thermal.frp_mean_mw, 2, 'MW') + '</td></tr>' +
+          '<tr><td>FRP maximum</td><td>' + v(thermal.frp_max_mw, 2, 'MW') + '</td></tr>' +
+          '<tr><td>Max brightness</td><td>' + v(thermal.brightness_ti4_max_k, 1, 'K') + '</td></tr>' +
+        '</table>' +
+      '</div>' +
+
+      '<div class="dash-card">' +
+        '<div class="dash-card-title">Industrial context</div>' +
+        '<table class="stat-table">' +
+          '<tr><td>Inside MIDC</td><td>' + vn(thermal.inside_midc_count) + '</td></tr>' +
+          '<tr><td>Industrial polygon</td><td>' + vn(thermal.inside_industrial_area_count) + '</td></tr>' +
+          '<tr><td>Near facility</td><td>' + vn(thermal.near_industrial_facility_count) + '</td></tr>' +
+          '<tr><td>Nearest industry</td><td>' + text(industries.join(', ')) + '</td></tr>' +
+        '</table>' +
+      '</div>' +
+
+      '<div class="dash-card">' +
+        '<div class="dash-card-title">Observation context</div>' +
+        '<table class="stat-table">' +
+          '<tr><td>Land cover</td><td>' + countList(landcover) + '</td></tr>' +
+          '<tr><td>Confidence</td><td>' + countList(confidence) + '</td></tr>' +
+          '<tr><td>Satellite</td><td>' + text((thermal.satellites || []).join(', ')) + '</td></tr>' +
+        '</table>' +
+      '</div>' +
+
+      '<div class="dash-card">' +
+        '<div class="dash-card-title">Source classification</div>' +
+        '<div style="font-size:12px;line-height:1.5">' +
+          '<b>Not classified</b><br>' +
+          '<span style="opacity:.65">The current dataset provides observed and enriched thermal anomalies. It does not yet have sufficient labels for an industrial-vs-vegetation classifier.</span>' +
+        '</div>' +
+      '</div>' +
+
+      '<div class="dash-card">' +
+        '<div class="dash-card-title">Weather</div>' +
+        '<div id="fcast-weather" class="fcast-weather"><span style="opacity:.4;font-size:10px">Loading…</span></div>' +
+      '</div>' +
+
+      '<div class="dash-card dash-card-wide">' +
+        '<div class="dash-card-title">Wind Forecast +12h</div>' +
+        '<div id="dash-wind-sparkline">' + windSparkline(wf) + '</div>' +
+        '<div id="dash-wind-labels" class="forecast-labels">' +
+          wf.filter((_, i) => i % 3 === 0).map(f => {
+            const spd = (f.wind_speed_kmh || f.speed_kmh);
+            return '<span>+' + f.hour + 'h<br><b>' + (spd != null ? spd.toFixed(0) : '—') + '</b></span>';
+          }).join('') +
+        '</div>' +
+      '</div>';
+  }
+
   function renderDashboard(analysis, fireCtx, weatherForecast) {
     const el = document.getElementById('dashboard-content');
     if (!el) return;
@@ -62,6 +140,11 @@
     // Validate we have some real data
     if (!fireCtx && !analysis) {
       el.innerHTML = '<div class="dash-empty">No data available for this timestep</div>';
+      return;
+    }
+
+    if (fireCtx && fireCtx.analysis_mode === 'thermal_monitoring') {
+      renderThermalDashboard(el, fireCtx, weatherForecast);
       return;
     }
 

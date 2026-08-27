@@ -24,9 +24,6 @@ _REQUIRED_MODELS = [
     "model_full_thresholds.json",
 ]
 
-from pipeline.check.builder import build_playback_events
-
-
 def run_checks(app) -> None:
     """Verify environment at startup — warns only, does not download."""
     print("=" * 50)
@@ -58,6 +55,8 @@ def _check_static_gpkg() -> None:
 
 def _check_events() -> None:
     from db.models import FireEvent
+    from pipeline.event_config import uses_wildfire_model
+
     events = FireEvent.query.all()
     if not events:
         print("[checks] WARN: no FireEvents in DB")
@@ -65,10 +64,20 @@ def _check_events() -> None:
     for event in events:
         event_data_dir = _DATA_DIR / "events" / f"{event.year}_{event.id:04d}"
         era5 = event_data_dir / "data_processed" / "weather" / "era5.parquet"
-        fire_state = event_data_dir / "data_processed" / "training" / "fire_state.pkl"
-        missing = [p for p in (era5, fire_state) if not p.exists()]
+        if uses_wildfire_model(event):
+            required = (
+                era5,
+                event_data_dir / "data_processed" / "training" / "fire_state.pkl",
+            )
+        else:
+            required = (
+                era5,
+                event_data_dir / "data_processed" / "firms" / "hotspots.parquet",
+                event_data_dir / "data_processed" / "thermal" / "history_metadata.json",
+                event_data_dir / "data_processed" / "thermal" / "enrichment_metadata.json",
+            )
+        missing = [path for path in required if not path.exists()]
         if missing:
             print(f"[checks] WARN: {event.name} — missing {[p.name for p in missing]} — run prepare.py")
         else:
             print(f"[checks] {event.name} — OK")
-
