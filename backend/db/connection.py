@@ -90,19 +90,29 @@ def seed_db():
         if existing is not None:
             configured_start = date.fromisoformat(config.start_date)
             configured_end = date.fromisoformat(config.end_date)
+            # A successful live thermal refresh advances the replay window.
+            # Preserve that progress across restarts instead of resetting the
+            # event to the original demonstration end date.
+            synchronized_end = configured_end
+            if (
+                config.analysis_mode == "thermal_monitoring"
+                and existing.end_date is not None
+                and existing.end_date > configured_end
+            ):
+                synchronized_end = existing.end_date
             configured_bbox = WKTElement(config.bbox_wkt, srid=4326)
             changed = (
                 existing.name != config.name
                 or existing.year != config.year
                 or existing.start_date != configured_start
-                or existing.end_date != configured_end
+                or existing.end_date != synchronized_end
                 or existing.description != config.description
             )
             existing.name = config.name
             existing.year = config.year
             existing.bbox = configured_bbox
             existing.start_date = configured_start
-            existing.end_date = configured_end
+            existing.end_date = synchronized_end
             existing.description = config.description
             if changed:
                 existing.replay_ms = None

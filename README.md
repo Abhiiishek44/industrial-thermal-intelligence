@@ -1,8 +1,13 @@
-# Wildfire Decision Support System
+# AI Geospatial Thermal-Source Decision Support
 
-An AI-powered wildfire situational awareness platform built for emergency managers. The system combines satellite hotspot data, machine learning fire spread prediction, and real-time crowd intelligence to generate structured situational briefings and support evacuation decision-making.
+An India-first geospatial monitoring platform that enriches NASA FIRMS thermal
+anomalies with land cover, industrial infrastructure and temporal recurrence.
+Its explainable source-classification baseline distinguishes industrial-fire
+candidates, gas flares, agricultural burning, mining activity, wildfires,
+normal industrial process heat and uncertain detections.
 
-> Built for **ENGO 651 — Advanced Geospatial Topics**, University of Calgary, 2025.
+The repository also retains its original wildfire spread, evacuation and crowd
+intelligence workflow for the Fort McMurray 2016 replay.
 
 **Live demo:** https://wildfire-ai.com/demo
 
@@ -33,6 +38,21 @@ AI-synthesized crowd intelligence: urgent help requests, fire observations, and 
 ---
 
 ## Features
+
+### India Thermal-Source Monitoring
+
+- Six industrial corridors and four forest landscapes
+- Historical and near-real-time VIIRS FIRMS ingestion
+- Multi-sensor deduplication and spatial-temporal source tracking
+- ESA WorldCover cropland, forest, built-up and bare-land context
+- OpenStreetMap industrial, oil/gas, power and mining infrastructure context
+- Separate persistent-source and short-lived thermal-episode analysis
+- Explainable seven-way rules-v2 classification with confidence and evidence
+- GeoJSON APIs and Leaflet overlays for 5-day, 30-day, persistence and classification views
+- Automatic four-hour region-scoped FIRMS refresh with dashboard freshness polling
+
+The classifier is an auditable hackathon baseline, not a validated trained
+model. See [SIH implementation and evaluation plan](docs/SIH_IMPLEMENTATION.md).
 
 ### Fire Spread Prediction
 - Logistic Regression ML model trained on VIIRS FIRMS hotspot + ERA5 weather data
@@ -159,11 +179,21 @@ python main.py
 The server starts on `http://localhost:5000`. The admin account is seeded from
 `ADMIN_USERNAME` and `ADMIN_PASSWORD` on first startup.
 
+When `FIRMS_API_KEY` and `THERMAL_AUTO_REFRESH=1` are configured, the backend
+starts a near-real-time refresh after initial preparation and repeats it every
+`THERMAL_REFRESH_INTERVAL_HOURS` (four hours by default). Each successful cycle
+archives new daily observations, rebuilds enrichment/persistence/classification
+artifacts and advances the monitoring timeline. The browser checks lightweight
+refresh metadata every five minutes and reloads map layers only when the latest
+satellite observation changes.
+
 ---
 
 ## Data
 
-The system uses the **Fort McMurray 2016 wildfire** as the primary demonstration event.
+The public catalog contains ten Indian thermal-monitoring regions. The
+**Fort McMurray 2016 wildfire** remains available as the legacy spread-prediction
+demonstration.
 
 Pre-processed data (ERA5, FIRMS, fuel type rasters, ML model weights) is stored under `data/events/2016_0001/` and is not included in this repository due to size. The pipeline will attempt to download and process it on first run if CDS API credentials are configured.
 

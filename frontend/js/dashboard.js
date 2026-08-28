@@ -56,6 +56,23 @@
       arrows + '</svg>';
   }
 
+  function windDirectionLabel(degrees) {
+    if (degrees == null || !Number.isFinite(Number(degrees))) return '—';
+    return ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(Number(degrees) / 45) % 8];
+  }
+
+  function weatherSummary(record) {
+    if (!record) return '<span style="opacity:.55;font-size:10px">Weather unavailable</span>';
+    const speed = record.wind_speed_kmh != null ? record.wind_speed_kmh : record.speed_kmh;
+    return '<table class="stat-table">' +
+      '<tr><td>Temperature</td><td>' + v(record.temp_c, 1, '°C') + '</td></tr>' +
+      '<tr><td>Humidity</td><td>' + v(record.rh, 0, '%') + '</td></tr>' +
+      '<tr><td>Wind</td><td>' + v(speed, 1, 'km/h') + ' ' + windDirectionLabel(record.wind_dir) + '</td></tr>' +
+      '<tr><td>Valid time</td><td>' + text(record.valid_time || 'Current observation') + '</td></tr>' +
+      '<tr><td>Source</td><td>' + text(record.source || 'Weather provider') + '</td></tr>' +
+    '</table>';
+  }
+
   function renderThermalDashboard(el, fireCtx, weatherForecast) {
     const fire = fireCtx.fire || {};
     const thermal = fireCtx.thermal || {};
@@ -126,19 +143,22 @@
         (classified
           ? '<table class="stat-table">' +
               '<tr><td>Classes</td><td>' + countList(thermal.classification_counts || {}) + '</td></tr>' +
+              '<tr><td>Industrial-fire alerts</td><td>' + vn(thermal.emergency_candidate_count) + '</td></tr>' +
               '<tr><td>Mean confidence</td><td>' + v(thermal.classification_mean_confidence != null ? thermal.classification_mean_confidence * 100 : null, 0, '%') + '</td></tr>' +
-              '<tr><td>Method</td><td>Explainable rules v1</td></tr>' +
+              '<tr><td>Method</td><td>' + text((thermal.classification_method || 'explainable_rules_v2').replaceAll('_', ' ')) + '</td></tr>' +
             '</table>' +
             '<div style="font-size:10px;opacity:.6;margin-top:5px">Rule-based baseline, not a trained ML model.</div>'
           : '<div style="font-size:12px;line-height:1.5">' +
               '<b>Open Source Classification view</b><br>' +
-              '<span style="opacity:.65">Persistent sources can be classified using industrial, persistence and land-cover evidence.</span>' +
+              '<span style="opacity:.65">Classifies persistent sources and short-lived fire episodes using facility, temporal and land-cover evidence.</span>' +
             '</div>') +
       '</div>' +
 
       '<div class="dash-card">' +
         '<div class="dash-card-title">Weather</div>' +
-        '<div id="fcast-weather" class="fcast-weather"><span style="opacity:.4;font-size:10px">Loading…</span></div>' +
+        '<div id="fcast-weather" class="fcast-weather">' +
+          (wf.length ? weatherSummary(wf[0]) : '<span style="opacity:.4;font-size:10px">Loading…</span>') +
+        '</div>' +
       '</div>' +
 
       '<div class="dash-card dash-card-wide">' +
@@ -304,6 +324,7 @@
       if ((_attempt || 0) < 15) setTimeout(function() { updateWeather(weatherForecast, (_attempt || 0) + 1); }, 100);
       return;
     }
+    if (weatherEl) weatherEl.innerHTML = weatherSummary(weatherForecast[0]);
     sparkEl.innerHTML = windSparkline(weatherForecast);
     labsEl.innerHTML  = weatherForecast.filter((_, i) => i % 3 === 0).map(f => {
       const spd = (f.wind_speed_kmh || f.speed_kmh);

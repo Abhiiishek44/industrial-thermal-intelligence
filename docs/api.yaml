@@ -1,7 +1,7 @@
 openapi: 3.0.0
 info:
   title: Wildfire Decision Support API
-  version: 4.0.0
+  version: 5.0.0
   description: >
     REST API for the Wildfire Decision Support System (ENGO 651).
     All GeoJSON geometries are in EPSG:4326 (WGS84).
@@ -602,6 +602,29 @@ paths:
         404: { description: Event not found }
         409: { description: Thermal context is not configured for this event }
 
+  /api/events/{event_id}/thermal/refresh-status:
+    get:
+      summary: Get near-real-time FIRMS scheduler and data freshness status
+      parameters:
+        - { name: event_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        200:
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [never, running, succeeded, failed, unknown] }
+                  enabled: { type: boolean }
+                  interval_hours: { type: number, example: 4 }
+                  last_attempt_at: { type: string, format: date-time, nullable: true }
+                  last_success_at: { type: string, format: date-time, nullable: true }
+                  last_observed_at: { type: string, format: date-time, nullable: true }
+                  next_refresh_at: { type: string, format: date-time, nullable: true }
+                  new_observation_count: { type: integer }
+        404: { description: Event not found }
+        409: { description: Thermal monitoring is not configured for this event }
+
   /api/events/{event_id}/thermal/detections:
     get:
       summary: Get FIRMS detections enriched with industrial proximity and land cover
@@ -615,6 +638,36 @@ paths:
               schema: { $ref: '#/components/schemas/GeoJsonFeatureCollection' }
         404: { description: Event not found }
         409: { description: Thermal context is not configured for this event }
+
+  /api/events/{event_id}/thermal/persistent:
+    get:
+      summary: Get recurring thermal sources in a 5-day or 30-day window
+      parameters:
+        - { name: event_id, in: path, required: true, schema: { type: integer } }
+        - { name: days, in: query, schema: { type: integer, enum: [5, 30], default: 30 } }
+        - { name: end, in: query, schema: { type: string, format: date-time } }
+      responses:
+        200:
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GeoJsonFeatureCollection' }
+
+  /api/events/{event_id}/thermal/classifications:
+    get:
+      summary: Classify persistent sources and short-lived thermal episodes
+      description: >
+        Explainable rules-v2 baseline. Classes are industrial_fire, gas_flare,
+        agricultural_burning, mining_activity, wildfire,
+        industrial_process_heat and unknown. This is not a trained model.
+      parameters:
+        - { name: event_id, in: path, required: true, schema: { type: integer } }
+        - { name: days, in: query, schema: { type: integer, enum: [5, 30], default: 30 } }
+        - { name: end, in: query, schema: { type: string, format: date-time } }
+      responses:
+        200:
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GeoJsonFeatureCollection' }
 
   /api/events/{event_id}/layers/midc:
     get:

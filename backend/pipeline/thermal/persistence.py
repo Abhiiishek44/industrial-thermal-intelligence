@@ -21,6 +21,20 @@ DEFAULT_CLUSTER_RADIUS_M = 300.0
 DEFAULT_CLUSTER_MIN_OBSERVATIONS = 2
 
 
+def _atomic_write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(content, encoding="utf-8")
+    temporary.replace(path)
+
+
+def _atomic_write_parquet(frame: pd.DataFrame, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    frame.to_parquet(temporary, index=False)
+    temporary.replace(path)
+
+
 def get_persistence_settings() -> dict:
     return {
         "dedup_radius_m": float(os.getenv("THERMAL_DEDUP_RADIUS_M", DEFAULT_DEDUP_RADIUS_M)),
@@ -171,8 +185,15 @@ def build_persistent_sources(
     *,
     radius_m: float = DEFAULT_CLUSTER_RADIUS_M,
     min_observations: int = DEFAULT_CLUSTER_MIN_OBSERVATIONS,
+    minimum_active_days: int = 2,
 ) -> pd.DataFrame:
-    """Cluster recurring detections and calculate explainable persistence features."""
+    """Cluster detections and calculate explainable temporal/source features.
+
+    ``minimum_active_days=2`` preserves the persistent-source contract. The
+    classifier deliberately uses ``1`` and separately retains isolated
+    observations so a short-lived industrial fire or agricultural burn is not
+    discarded before source classification.
+    """
     if detections.empty:
         return pd.DataFrame()
     frame = detections.copy().reset_index(drop=True)
@@ -200,7 +221,7 @@ def build_persistent_sources(
         first_seen = group["observed_at"].min()
         last_seen = group["observed_at"].max()
         unique_days = int(group["observed_at"].dt.date.nunique())
-        if unique_days < 2:
+        if unique_days < minimum_active_days:
             continue
         source_number += 1
         duration_days = (last_seen - first_seen).total_seconds() / 86_400.0
@@ -220,6 +241,22 @@ def build_persistent_sources(
             errors="coerce",
         )
         nearest_index = nearest_distances.idxmin() if nearest_distances.notna().any() else None
+        median_frp = float(frp.median()) if frp.notna().any() else None
+        max_frp = float(frp.max()) if frp.notna().any() else None
+        mean_frp = float(frp.mean()) if frp.notna().any() else None
+        frp_std = float(frp.std(ddof=0)) if frp.notna().any() else None
+        peak_ratio = (
+            max_frp / median_frp
+            if max_frp is not None and median_frp is not None and median_frp > 0
+            else None
+        )
+
+        def numeric_max(name: str):
+            values = pd.to_numeric(
+                group.get(name, pd.Series(index=group.index, dtype=float)), errors="coerce",
+            )
+            return float(values.max()) if values.notna().any() else None
+
         rows.append({
             "cluster_id": f"cluster_{source_number:03d}",
             "latitude": center_lat,
@@ -232,10 +269,16 @@ def build_persistent_sources(
             "first_seen": first_seen,
             "last_seen": last_seen,
             "active_duration_days": round(duration_days, 3),
-            "mean_frp": float(frp.mean()) if frp.notna().any() else None,
-            "max_frp": float(frp.max()) if frp.notna().any() else None,
-            "median_frp": float(frp.median()) if frp.notna().any() else None,
-            "frp_std": float(frp.std(ddof=0)) if frp.notna().any() else None,
+            "mean_frp": mean_frp,
+            "max_frp": max_frp,
+            "median_frp": median_frp,
+            "frp_std": frp_std,
+            "frp_peak_ratio": round(peak_ratio, 4) if peak_ratio is not None else None,
+            "frp_coefficient_variation": (
+                round(frp_std / mean_frp, 4)
+                if frp_std is not None and mean_frp is not None and mean_frp > 0
+                else None
+            ),
             "day_detection_count": day_count,
             "night_detection_count": night_count,
             "night_ratio": round(night_count / len(group), 4),
@@ -243,6 +286,7 @@ def build_persistent_sources(
             "satellites": ",".join(sorted(satellite_values)),
             "coordinate_variance_m2": float(np.mean(np.square(distances))),
             "max_distance_from_center_m": float(distances.max()),
+            "active_day_density": round(unique_days / max(duration_days + 1.0, 1.0), 4),
             "inside_industrial_polygon": bool(group.get(
                 "inside_industrial_polygon", pd.Series(False, index=group.index),
             ).fillna(False).astype(bool).any()),
@@ -258,11 +302,120 @@ def build_persistent_sources(
             "nearest_industry_type": (
                 group.loc[nearest_index].get("nearest_industry_type") if nearest_index is not None else None
             ),
+            "industrial_feature_count_500m": numeric_max("industrial_feature_count_500m"),
+            "industrial_feature_count_1km": numeric_max("industrial_feature_count_1km"),
             "landcover_group": _mode(group.get("landcover_group", pd.Series(dtype="string")), "unknown"),
             "landcover_class": _mode(group.get("landcover_class", pd.Series(dtype="string")), "unknown"),
+            "forest_fraction_500m": numeric_max("forest_fraction_500m"),
+            "cropland_fraction_500m": numeric_max("cropland_fraction_500m"),
+            "builtup_fraction_500m": numeric_max("builtup_fraction_500m"),
             "persistence_level": persistence_level,
         })
     return pd.DataFrame(rows)
+
+
+def build_classification_candidates(
+    detections: pd.DataFrame,
+    *,
+    radius_m: float = DEFAULT_CLUSTER_RADIUS_M,
+) -> pd.DataFrame:
+    """Build source candidates without dropping one-off thermal episodes.
+
+    Multi-observation clusters use the full persistence feature builder.
+    Remaining isolated detections are converted in one vectorized pass; this
+    avoids thousands of one-row group operations in forest-fire seasons.
+    """
+    if detections.empty:
+        return pd.DataFrame()
+    frame = detections.copy().reset_index(drop=True)
+    frame["observed_at"] = pd.to_datetime(frame["observed_at"], utc=True)
+    clustered = build_persistent_sources(
+        detections,
+        radius_m=radius_m,
+        min_observations=2,
+        minimum_active_days=1,
+    )
+    remaining = frame
+    if not clustered.empty:
+        cluster_tree = BallTree(
+            np.radians(
+                clustered[["latitude", "longitude"]].astype(float).to_numpy()
+            ),
+            metric="haversine",
+        )
+        nearest_distance, nearest_index = cluster_tree.query(
+            np.radians(
+                frame[["latitude", "longitude"]].astype(float).to_numpy()
+            ),
+            k=1,
+        )
+        cluster_extent = pd.to_numeric(
+            clustered.get(
+                "max_distance_from_center_m",
+                pd.Series(0.0, index=clustered.index),
+            ),
+            errors="coerce",
+        ).fillna(0.0).to_numpy()
+        allowed_distance = radius_m + cluster_extent[nearest_index[:, 0]]
+        used_mask = (
+            nearest_distance[:, 0] * EARTH_RADIUS_M <= allowed_distance
+        )
+        remaining = frame.loc[~used_mask].reset_index(drop=True)
+    if remaining.empty:
+        return clustered.reset_index(drop=True)
+
+    singles = remaining.copy()
+    singles["cluster_id"] = [
+        f"episode_{index:05d}" for index in range(1, len(singles) + 1)
+    ]
+    singles["detection_count"] = 1
+    singles["raw_observation_count"] = pd.to_numeric(
+        singles.get(
+            "raw_observation_count", pd.Series(1, index=singles.index),
+        ),
+        errors="coerce",
+    ).fillna(1).astype(int)
+    singles["unique_active_days"] = 1
+    singles["first_seen"] = singles["observed_at"]
+    singles["last_seen"] = singles["observed_at"]
+    singles["active_duration_days"] = 0.0
+    frp = pd.to_numeric(singles.get("frp"), errors="coerce")
+    singles["mean_frp"] = frp
+    singles["max_frp"] = frp
+    singles["median_frp"] = frp
+    singles["frp_std"] = 0.0
+    singles["frp_peak_ratio"] = 1.0
+    singles["frp_coefficient_variation"] = 0.0
+    is_night = singles.get(
+        "daynight", pd.Series("", index=singles.index),
+    ).astype(str).eq("N")
+    singles["day_detection_count"] = (~is_night).astype(int)
+    singles["night_detection_count"] = is_night.astype(int)
+    singles["night_ratio"] = is_night.astype(float)
+    singles["sensor_count"] = pd.to_numeric(
+        singles.get("sensor_count", pd.Series(1, index=singles.index)),
+        errors="coerce",
+    ).fillna(1).astype(int)
+    if "satellites" not in singles:
+        singles["satellites"] = singles.get(
+            "satellite", pd.Series("", index=singles.index),
+        ).fillna("").astype(str)
+    singles["coordinate_variance_m2"] = 0.0
+    singles["max_distance_from_center_m"] = 0.0
+    singles["active_day_density"] = 1.0
+    singles["persistence_level"] = "LOW"
+
+    columns = list(dict.fromkeys(
+        list(clustered.columns) + list(singles.columns)
+    ))
+    return pd.concat(
+        [
+            clustered.reindex(columns=columns),
+            singles.reindex(columns=columns),
+        ],
+        ignore_index=True,
+        sort=False,
+    )
 
 
 def thermal_frame_to_geojson(frame: pd.DataFrame) -> dict:
@@ -324,8 +477,8 @@ def ensure_persistence_analysis(event, study) -> dict:
         min_observations=cluster_min_observations,
     )
 
-    detections.to_parquet(detections_path, index=False)
-    clusters.to_parquet(clusters_path, index=False)
+    _atomic_write_parquet(detections, detections_path)
+    _atomic_write_parquet(clusters, clusters_path)
     _write_geojson(detections, thermal_dir / "detections_aggregated.geojson")
     _write_geojson(clusters, thermal_dir / "persistent_clusters.geojson")
 
@@ -345,7 +498,5 @@ def ensure_persistence_analysis(event, study) -> dict:
         "cluster_min_observations": cluster_min_observations,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
-    metadata_path.write_text(
-        json.dumps(metadata, indent=2), encoding="utf-8",
-    )
+    _atomic_write_text(metadata_path, json.dumps(metadata, indent=2))
     return metadata

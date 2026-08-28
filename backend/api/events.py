@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -15,6 +16,15 @@ _replay_times: dict[int, dict] = {}
 events_bp = Blueprint('events', __name__)
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "events"
+THERMAL_SOURCE_CLASSES = (
+    'industrial_fire',
+    'gas_flare',
+    'agricultural_burning',
+    'mining_activity',
+    'wildfire',
+    'industrial_process_heat',
+    'unknown',
+)
 
 
 def _event_dir(event) -> Path:
@@ -65,7 +75,7 @@ def _india_thermal_overview(events) -> dict:
 
     features = []
     per_region = []
-    class_counts = {'industrial': 0, 'natural': 0, 'unknown': 0}
+    class_counts = {name: 0 for name in THERMAL_SOURCE_CLASSES}
     focus_counts = {'industrial': 0, 'forest': 0}
     observation_count = 0
 
@@ -74,7 +84,7 @@ def _india_thermal_overview(events) -> dict:
             continue
         serialized = _serialize(event)
         path = _event_dir(event) / 'data_processed/thermal/classified_sources.geojson'
-        region_counts = {'industrial': 0, 'natural': 0, 'unknown': 0}
+        region_counts = {name: 0 for name in THERMAL_SOURCE_CLASSES}
         region_observations = 0
         region_features = []
         if path.exists():
@@ -84,8 +94,13 @@ def _india_thermal_overview(events) -> dict:
         for feature in region_features:
             properties = dict(feature.get('properties') or {})
             source_class = str(properties.get('source_class') or 'unknown').lower()
+            source_class = {
+                'industrial': 'industrial_process_heat',
+                'natural': 'wildfire',
+            }.get(source_class, source_class)
             if source_class not in class_counts:
                 source_class = 'unknown'
+            properties['source_class'] = source_class
             detections = int(properties.get('raw_observation_count') or 0)
             class_counts[source_class] += 1
             region_counts[source_class] += 1
@@ -225,6 +240,27 @@ def get_thermal_history(event_id: int):
     return jsonify(metadata), 200
 
 
+@events_bp.route('/<int:event_id>/thermal/refresh-status', methods=['GET'])
+@token_required
+def get_thermal_refresh_status(event_id: int):
+    """Return scheduler freshness without exposing the configured FIRMS key."""
+    event, error = _thermal_event_or_error(event_id)
+    if error:
+        return error
+
+    from pipeline.thermal.refresh import get_refresh_settings, load_refresh_status
+
+    status = load_refresh_status(event)
+    settings = get_refresh_settings()
+    configured = settings['enabled'] and bool(os.getenv('FIRMS_API_KEY', '').strip())
+    return jsonify({
+        **status,
+        'enabled': configured,
+        'interval_hours': settings['interval_hours'],
+        'lookback_days': settings['lookback_days'],
+    }), 200
+
+
 def _thermal_event_or_error(event_id: int):
     """Resolve a thermal event for context endpoints."""
     from pipeline.event_config import THERMAL_MONITORING_MODE, get_event_config
@@ -346,6 +382,39 @@ def _windowed_persistent_sources(event, days: int, end: datetime):
     return clusters, start
 
 
+def _windowed_classification_candidates(event, days: int, end: datetime):
+    """Build candidates including one-day episodes for fire classification."""
+    import pandas as pd
+    from pipeline.thermal import (
+        build_classification_candidates,
+        get_persistence_settings,
+    )
+
+    detections_path = (
+        _event_dir(event) / 'data_processed/thermal/detections_aggregated.parquet'
+    )
+    if not detections_path.exists():
+        return _windowed_persistent_sources(event, days, end)
+    start = end - timedelta(days=days - 1)
+    detections = pd.read_parquet(detections_path)
+    from pipeline.event_config import get_event_config
+
+    display_bbox = get_event_config(event).view_bbox
+    if display_bbox and {'longitude', 'latitude'}.issubset(detections.columns):
+        min_lon, min_lat, max_lon, max_lat = display_bbox
+        detections = detections[
+            detections['longitude'].between(min_lon, max_lon)
+            & detections['latitude'].between(min_lat, max_lat)
+        ].copy()
+    observed_at = pd.to_datetime(detections['observed_at'], utc=True)
+    window = detections[(observed_at >= start) & (observed_at <= end)].copy()
+    settings = get_persistence_settings()
+    candidates = build_classification_candidates(
+        window, radius_m=settings['cluster_radius_m'],
+    )
+    return candidates, start
+
+
 @events_bp.route('/<int:event_id>/thermal/detections', methods=['GET'])
 @token_required
 def get_enriched_thermal_detections(event_id: int):
@@ -465,8 +534,8 @@ def get_thermal_classifications(event_id: int):
         thermal_frame_to_geojson,
     )
 
-    clusters, start = _windowed_persistent_sources(event, days, end)
-    classified = classify_persistent_sources(clusters)
+    candidates, start = _windowed_classification_candidates(event, days, end)
+    classified = classify_persistent_sources(candidates)
     payload = thermal_frame_to_geojson(classified)
     metadata = classification_metadata(event.id, classified)
     return jsonify({

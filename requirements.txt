@@ -11,7 +11,7 @@ pandas
 scikit-learn
 xgboost
 geopandas
-pydantic 
+pydantic
 geoalchemy2
 cdsapi
 osmium

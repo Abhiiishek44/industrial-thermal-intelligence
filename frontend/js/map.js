@@ -66,6 +66,27 @@
     low:    { color: '#1976d2', fillColor: '#90caf9', fillOpacity: 0.16, weight: 1.0, opacity: 0.70 },
   };
 
+  const THERMAL_CLASS_COLORS = {
+    industrial_fire: '#dc2626',
+    gas_flare: '#a855f7',
+    agricultural_burning: '#eab308',
+    mining_activity: '#8b5e3c',
+    wildfire: '#16a34a',
+    industrial_process_heat: '#f97316',
+    unknown: '#6b7280',
+  };
+
+  function thermalClass(value) {
+    return { industrial: 'industrial_process_heat', natural: 'wildfire' }[value] ||
+      value || 'unknown';
+  }
+
+  function thermalClassLabel(value) {
+    return thermalClass(value).replaceAll('_', ' ').replace(/\b\w/g, function(letter) {
+      return letter.toUpperCase();
+    });
+  }
+
   // ── HOME MAP ────────────────────────────────────────────────────────────────
 
   class HomeMap {
@@ -178,14 +199,13 @@
     renderIndiaOverview(geojson) {
       this._overviewLayer.clearLayers();
       if (!geojson || !Array.isArray(geojson.features)) return;
-      const colors = { industrial: '#ff6b35', natural: '#2eaa58', unknown: '#888888' };
       const renderer = this._overviewCanvas;
       L.geoJSON(geojson, {
         pointToLayer(feature, latlng) {
           const properties = feature.properties || {};
-          const sourceClass = properties.source_class || 'unknown';
+          const sourceClass = thermalClass(properties.source_class);
           const detections = Number(properties.detection_count || 1);
-          const color = colors[sourceClass] || colors.unknown;
+          const color = THERMAL_CLASS_COLORS[sourceClass] || THERMAL_CLASS_COLORS.unknown;
           return L.circleMarker(latlng, {
             radius: Math.max(4, Math.min(11, 3 + Math.sqrt(detections))),
             color: color,
@@ -200,7 +220,7 @@
           layer.bindPopup(
             '<b>' + (p.region_name || 'India thermal source') + '</b><br>' +
             (p.state ? p.state + '<br>' : '') +
-            'Class: <b>' + (p.source_class || 'unknown') + '</b><br>' +
+            'Class: <b>' + thermalClassLabel(p.source_class) + '</b><br>' +
             'Detections: ' + (p.detection_count || 0) + '<br>' +
             'Active days: ' + (p.unique_active_days || 0) + '<br>' +
             'Maximum FRP: ' + (p.max_frp != null ? Number(p.max_frp).toFixed(1) + ' MW' : 'N/A')
@@ -464,13 +484,13 @@
     renderClassifiedSources(geojson) {
       this._layers.hotspots.clearLayers();
       if (!geojson?.features?.length) return;
-      const colors = { industrial: '#ff8800', natural: '#2eaa58', unknown: '#888888' };
       const renderer = this._hotspotCanvas;
       L.geoJSON(geojson, {
         pointToLayer(f, latlng) {
           const p = f.properties || {};
           const count = Number(p.detection_count || 1);
-          const color = colors[p.source_class] || colors.unknown;
+          const color = THERMAL_CLASS_COLORS[thermalClass(p.source_class)] ||
+            THERMAL_CLASS_COLORS.unknown;
           return L.circleMarker(latlng, {
             radius: Math.max(8, Math.min(19, 7 + Math.sqrt(count) * 1.5)),
             color: color,
@@ -487,7 +507,9 @@
             : [];
           layer.bindPopup(
             '<b>' + (p.cluster_id || 'Thermal source') + '</b><br>' +
-            'Classification: <b>' + (p.source_class || 'unknown') + '</b><br>' +
+            'Classification: <b>' + thermalClassLabel(p.source_class) + '</b><br>' +
+            'State: ' + (p.operational_state || 'N/A').replaceAll('_', ' ') + '<br>' +
+            'Alert: <b>' + (p.alert_level || 'N/A') + '</b><br>' +
             'Subtype: ' + (p.source_subtype || 'N/A').replaceAll('_', ' ') + '<br>' +
             'Confidence: ' + (p.classification_confidence != null
               ? Math.round(Number(p.classification_confidence) * 100) + '%'

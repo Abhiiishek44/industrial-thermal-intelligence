@@ -106,9 +106,12 @@
     async getEvents()        { return apiFetch('/api/events/'); },
     async getIndiaThermalOverview() { return apiFetch('/api/events/thermal/overview'); },
     async getAoi(eid)        { return apiFetch('/api/events/' + eid + '/layers/aoi'); },
-    async getRealtimeFirms(hours) { return apiFetch('/api/firms/realtime' + (hours ? '?hours=' + hours : '')); },
+    async getRealtimeFirms(days) { return apiFetch('/api/firms/realtime' + (days ? '?days=' + days : '')); },
     async getEvent(id)       { return apiFetch('/api/events/' + id); },
     async getTimesteps(id)   { return apiFetch('/api/events/' + id + '/timesteps'); },
+    async getThermalRefreshStatus(eid) {
+      return apiFetch('/api/events/' + eid + '/thermal/refresh-status');
+    },
     async getThermalDetections(eid, days, end) {
       var query = '?days=' + encodeURIComponent(days) + '&end=' + encodeURIComponent(end);
       return apiFetch('/api/events/' + eid + '/thermal/detections' + query);

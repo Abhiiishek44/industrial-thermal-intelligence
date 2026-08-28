@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 from pipeline.event_config import EventConfig, THERMAL_MONITORING_MODE  # noqa: E402
 from pipeline.thermal.history import (  # noqa: E402
     _date_chunks,
+    collect_latest_firms,
     collect_firms_history,
     normalize_firms_frames,
     normalize_firms_history,
@@ -119,6 +120,47 @@ class ThermalHistoryTests(unittest.TestCase):
             self.assertTrue((output_dir / "firms_current.parquet").exists())
             saved = json.loads((output_dir / "history_metadata.json").read_text())
             self.assertEqual(saved["first_observed_at"], "2024-01-05T20:48:00+00:00")
+
+    def test_live_collection_omits_date_and_archives_daily_source_file(self):
+        config = EventConfig(
+            event_id=2,
+            name="test thermal",
+            year=2024,
+            bbox=(73.7, 18.7, 73.9, 18.9),
+            start_date="2024-01-01",
+            end_date="2024-01-05",
+            description="",
+            analysis_mode=THERMAL_MONITORING_MODE,
+            country_code="in",
+            roads_provider="none",
+            population_provider="none",
+            actual_perimeter_provider="none",
+        )
+        event = SimpleNamespace(id=2, year=2024, name=config.name)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            study = SimpleNamespace(project_dir=Path(temporary))
+            session = _Session()
+            with (
+                patch.dict(os.environ, {"FIRMS_API_KEY": "secret-test-key"}),
+                patch("pipeline.thermal.history.get_event_config", return_value=config),
+            ):
+                result = collect_latest_firms(
+                    event,
+                    study,
+                    day_range=2,
+                    sources=("VIIRS_NOAA20_NRT",),
+                    session=session,
+                )
+                metadata = normalize_firms_history(event, study)
+
+            self.assertEqual(result["record_count"], 1)
+            self.assertEqual(result["successful_source_count"], 1)
+            self.assertTrue(session.urls[0][0].endswith("/VIIRS_NOAA20_NRT/73.7,18.7,73.9,18.9/2"))
+            self.assertTrue(
+                (Path(temporary) / "data_raw/firms/history/live_VIIRS_NOAA20_NRT_2024-01-05.csv").exists()
+            )
+            self.assertEqual(metadata["source_products"], ["VIIRS_NOAA20_NRT"])
 
 
 if __name__ == "__main__":

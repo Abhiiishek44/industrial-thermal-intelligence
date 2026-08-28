@@ -235,10 +235,18 @@ def _industrial_area_geometry(element):
 
 
 def _facility_type(tags: dict) -> str:
+    man_made = tags.get("man_made")
+    if man_made in {"flare", "petroleum_well", "gasometer"}:
+        return str(man_made)
+    if tags.get("landuse") == "quarry" or tags.get("industrial") in {
+        "mine", "mining", "coal",
+    }:
+        return "mining"
     power = tags.get("power")
     if power:
-        return f"power_{power}"
-    if tags.get("man_made") == "works":
+        source = tags.get("plant:source") or tags.get("generator:source")
+        return f"power_{power}_{source}" if source else f"power_{power}"
+    if man_made == "works":
         return "works"
     if tags.get("industrial"):
         return str(tags["industrial"])
@@ -263,6 +271,8 @@ def collect_osm_industrial_context(event, study, *, session=requests) -> tuple[g
         "[out:json][timeout:60];("
         f'nwr["industrial"]({bbox});'
         f'nwr["man_made"="works"]({bbox});'
+        f'nwr["man_made"~"^(flare|petroleum_well|gasometer)$"]({bbox});'
+        f'nwr["landuse"="quarry"]({bbox});'
         f'nwr["power"~"^(plant|generator|substation)$"]({bbox});'
         ");out tags center;"
     )

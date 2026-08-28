@@ -44,32 +44,89 @@ def _source(**overrides):
 
 
 class ThermalClassificationTests(unittest.TestCase):
-    def test_industrial_class_requires_context_and_has_evidence(self):
+    def test_persistent_industrial_heat_is_not_called_a_fire(self):
         result = classify_source(_source(
             inside_industrial_polygon=True,
             near_industrial_facility=True,
             distance_to_nearest_industry_m=80.0,
             persistence_level="HIGH",
             unique_active_days=14,
+            active_duration_days=20,
             night_ratio=0.8,
             landcover_group="built_up",
         ))
 
-        self.assertEqual(result["source_class"], "industrial")
-        self.assertEqual(result["source_subtype"], "persistent_industrial_source")
-        self.assertGreaterEqual(result["classification_confidence"], 0.8)
-        self.assertTrue(any("industrial land-use" in item for item in result["classification_evidence"]))
+        self.assertEqual(result["source_class"], "industrial_process_heat")
+        self.assertEqual(result["operational_state"], "persistent_source")
+        self.assertFalse(result["is_emergency_candidate"])
+        self.assertTrue(any("industrial land use" in item for item in result["classification_evidence"]))
         self.assertEqual(result["classification_method"], CLASSIFICATION_METHOD)
 
-    def test_natural_class_uses_landcover_and_industrial_distance(self):
+    def test_wildfire_uses_vegetation_and_industrial_distance(self):
         result = classify_source(_source(
             distance_to_nearest_industry_m=3000.0,
             landcover_group="vegetation",
             landcover_class="tree_cover",
+            forest_fraction_500m=0.8,
         ))
 
-        self.assertEqual(result["source_class"], "natural")
+        self.assertEqual(result["source_class"], "wildfire")
         self.assertTrue(any("tree cover" in item for item in result["classification_evidence"]))
+
+    def test_gas_flare_requires_oil_gas_context_and_recurrence(self):
+        result = classify_source(_source(
+            near_industrial_facility=True,
+            distance_to_nearest_industry_m=70.0,
+            nearest_industry_type="petroleum_refinery",
+            nearest_industry_name="Example Oil Refinery",
+            persistence_level="HIGH",
+            unique_active_days=20,
+            active_duration_days=29,
+            night_ratio=0.75,
+            max_distance_from_center_m=80,
+        ))
+        self.assertEqual(result["source_class"], "gas_flare")
+        self.assertEqual(result["source_type"], "oil_gas_flare")
+
+    def test_cropland_episode_is_agricultural_burning(self):
+        result = classify_source(_source(
+            landcover_group="agricultural",
+            landcover_class="cropland",
+            cropland_fraction_500m=0.85,
+            unique_active_days=1,
+            active_duration_days=0,
+        ))
+        self.assertEqual(result["source_class"], "agricultural_burning")
+
+    def test_coal_mine_source_is_mining_activity(self):
+        result = classify_source(_source(
+            near_industrial_facility=True,
+            distance_to_nearest_industry_m=120.0,
+            nearest_industry_type="mining",
+            nearest_industry_name="Example Coal Mine",
+            landcover_group="bare",
+            persistence_level="HIGH",
+            unique_active_days=12,
+            active_duration_days=20,
+            max_distance_from_center_m=200,
+        ))
+        self.assertEqual(result["source_class"], "mining_activity")
+
+    def test_abrupt_industrial_anomaly_becomes_fire_candidate(self):
+        result = classify_source(_source(
+            inside_industrial_polygon=True,
+            near_industrial_facility=True,
+            distance_to_nearest_industry_m=50.0,
+            nearest_industry_type="works",
+            unique_active_days=1,
+            active_duration_days=0,
+            max_frp=150.0,
+            frp_peak_ratio=4.0,
+            max_distance_from_center_m=600,
+        ))
+        self.assertEqual(result["source_class"], "industrial_fire")
+        self.assertEqual(result["alert_level"], "high")
+        self.assertTrue(result["is_emergency_candidate"])
 
     def test_weak_or_conflicting_evidence_stays_unknown(self):
         result = classify_source(_source(
@@ -89,6 +146,7 @@ class ThermalClassificationTests(unittest.TestCase):
             distance_to_nearest_industry_m=50.0,
             persistence_level="HIGH",
             unique_active_days=12,
+            active_duration_days=20,
         )])
         with tempfile.TemporaryDirectory() as temporary:
             processed = Path(temporary) / "data_processed"
@@ -102,9 +160,12 @@ class ThermalClassificationTests(unittest.TestCase):
             payload = json.loads((thermal / "classified_sources.geojson").read_text())
 
             self.assertTrue((thermal / "classified_sources.parquet").exists())
-            self.assertEqual(metadata["class_counts"], {"industrial": 1})
+            self.assertEqual(metadata["class_counts"]["industrial_process_heat"], 1)
             self.assertFalse(metadata["is_trained_model"])
-            self.assertEqual(payload["features"][0]["properties"]["source_class"], "industrial")
+            self.assertEqual(
+                payload["features"][0]["properties"]["source_class"],
+                "industrial_process_heat",
+            )
             self.assertIsInstance(
                 payload["features"][0]["properties"]["classification_evidence"], list,
             )

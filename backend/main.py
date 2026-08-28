@@ -142,6 +142,9 @@ if __name__ == '__main__':
         run_checks(app)
         print("=== [pipeline] Complete — timestep slots ready ===")
 
+        from pipeline.thermal.refresh import start_thermal_refresh_scheduler
+        start_thermal_refresh_scheduler(app)
+
     threading.Thread(target=_run_pipeline, daemon=True).start()
 
     print("=== Starting Flask ===")

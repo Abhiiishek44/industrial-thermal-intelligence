@@ -12,6 +12,12 @@ SCHEMA_VERSION = "thermal-source-training-v1"
 
 
 class TrainingClass(str, Enum):
+    INDUSTRIAL_FIRE = "industrial_fire"
+    GAS_FLARE = "gas_flare"
+    MINING_ACTIVITY = "mining_activity"
+    WILDFIRE = "wildfire"
+    INDUSTRIAL_PROCESS_HEAT = "industrial_process_heat"
+    UNKNOWN_CONFIRMED = "unknown_confirmed"
     INDUSTRIAL_THERMAL = "industrial_thermal"
     WILDFIRE_OR_VEGETATION = "wildfire_or_vegetation"
     AGRICULTURAL_BURNING = "agricultural_burning"

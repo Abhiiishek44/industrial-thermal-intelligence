@@ -7,9 +7,11 @@ normalizer keeps the union of original FIRMS columns, adds a canonical UTC
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -23,6 +25,7 @@ from pipeline.event_config import THERMAL_MONITORING_MODE, get_event_config
 log = logging.getLogger(__name__)
 
 FIRMS_AREA_CSV_URL = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
+LIVE_FIRMS_SOURCES = ("VIIRS_NOAA20_NRT", "VIIRS_NOAA21_NRT")
 _IDENTITY_COLUMNS = (
     "latitude",
     "longitude",
@@ -77,6 +80,96 @@ def _atomic_write_text(path: Path, content: str) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(content, encoding="utf-8")
     temporary.replace(path)
+
+
+def _source_product_from_filename(path: Path) -> str:
+    """Recover the FIRMS product name from historical and live filenames."""
+    stem = path.stem.removeprefix("live_")
+    return re.sub(r"_\d{4}-\d{2}-\d{2}(?:_\d{4}-\d{2}-\d{2})?$", "", stem)
+
+
+def collect_latest_firms(
+    event,
+    study,
+    *,
+    day_range: int = 2,
+    sources: tuple[str, ...] = LIVE_FIRMS_SOURCES,
+    session=requests,
+) -> dict:
+    """Fetch latest region-scoped NRT observations and archive them by day.
+
+    Omitting the Area API date requests the newest available data. Daily files
+    allow an incomplete current day to be safely replaced on the next refresh
+    without discarding observations from earlier days.
+    """
+    config = get_event_config(event)
+    if config.analysis_mode != THERMAL_MONITORING_MODE:
+        return {"data_available": False, "files": [], "record_count": 0, "errors": []}
+    if day_range < 1 or day_range > 5:
+        raise ValueError("NASA FIRMS live day range must be between 1 and 5 days")
+
+    api_key = os.getenv("FIRMS_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("FIRMS_API_KEY is not configured")
+
+    paths = ThermalHistoryPaths.from_study(study)
+    paths.raw_dir.mkdir(parents=True, exist_ok=True)
+    area = ",".join(f"{coordinate:.10g}" for coordinate in config.bbox)
+    written: list[Path] = []
+    errors: list[dict] = []
+    record_count = 0
+    successful_sources = 0
+
+    for source in sources:
+        url = f"{FIRMS_AREA_CSV_URL}/{api_key}/{source}/{area}/{day_range}"
+        try:
+            response = session.get(url, timeout=60)
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            log.warning("[thermal-live] event %d source %s failed: %s", event.id, source, exc)
+            errors.append({"source": source, "error": str(exc)})
+            continue
+
+        body = response.text.lstrip("\ufeff").strip()
+        first_line = body.splitlines()[0].lower() if body else ""
+        if "latitude" not in first_line or "longitude" not in first_line:
+            if body and "no data" not in body.lower():
+                errors.append({"source": source, "error": "unexpected FIRMS response"})
+            else:
+                successful_sources += 1
+            continue
+
+        successful_sources += 1
+
+        frame = pd.read_csv(
+            io.StringIO(body),
+            dtype={"acq_date": "string", "acq_time": "string"},
+        )
+        frame.columns = [str(column).strip().lower() for column in frame.columns]
+        if "acq_date" not in frame.columns:
+            errors.append({"source": source, "error": "acq_date missing from FIRMS response"})
+            continue
+
+        frame["acq_date"] = frame["acq_date"].astype("string").str.strip()
+        for acquisition_date, daily in frame.groupby("acq_date", sort=True):
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(acquisition_date)):
+                continue
+            output = paths.raw_dir / f"live_{source}_{acquisition_date}.csv"
+            temporary = output.with_suffix(output.suffix + ".tmp")
+            daily.to_csv(temporary, index=False)
+            temporary.replace(output)
+            written.append(output)
+            record_count += len(daily)
+
+    return {
+        "data_available": bool(written),
+        "files": [str(path) for path in sorted(written)],
+        "record_count": int(record_count),
+        "successful_source_count": successful_sources,
+        "requested_source_count": len(sources),
+        "errors": errors,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 def collect_firms_history(event, study, *, session=requests) -> list[Path]:
@@ -172,7 +265,7 @@ def _read_raw_csv(path: Path) -> pd.DataFrame:
     frame.columns = [str(column).strip().lower() for column in frame.columns]
     frame["source_file"] = path.name
     if path.parent.name == "history":
-        frame["source_product"] = path.name.split("_20", 1)[0]
+        frame["source_product"] = _source_product_from_filename(path)
     else:
         frame["source_product"] = "existing_event_feed"
     return frame

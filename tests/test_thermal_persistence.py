@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from pipeline.thermal.persistence import (  # noqa: E402
     aggregate_multisensor_observations,
+    build_classification_candidates,
     build_persistent_sources,
     ensure_persistence_analysis,
 )
@@ -82,6 +83,18 @@ class ThermalPersistenceTests(unittest.TestCase):
         self.assertEqual(cluster["persistence_level"], "MEDIUM")
         self.assertAlmostEqual(cluster["night_ratio"], 2 / 3, places=3)
         self.assertAlmostEqual(cluster["mean_frp"], 20.0)
+        self.assertAlmostEqual(cluster["frp_peak_ratio"], 1.5)
+
+    def test_classification_candidates_keep_one_day_episode(self):
+        detections = aggregate_multisensor_observations(pd.DataFrame([
+            _row("2026-08-01T10:00:00Z", 15.1700, 76.6700, "N20", 80.0),
+        ]))
+
+        self.assertTrue(build_persistent_sources(detections).empty)
+        candidates = build_classification_candidates(detections)
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates.iloc[0]["unique_active_days"], 1)
 
     def test_analysis_writes_separate_derived_artifacts(self):
         observations = pd.DataFrame([

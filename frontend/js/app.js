@@ -21,6 +21,9 @@
   let _syncPushInterval   = null;   // admin: pushes virtual time to server every 10s
   let _initialReplayFloor = null;   // protects the richer event-1 default from a stale saved clock
   let _thermalViewMode    = '5d';   // cumulative activity is the monitoring default
+  let _thermalRefreshPoll = null;
+  let _thermalLastObservedMs = null;
+  const THERMAL_STATUS_POLL_MS = 5 * 60 * 1000;
 
   // ── Boot ─────────────────────────────────────────────────────────────────────
 
@@ -188,6 +191,7 @@
 
   async function openEvent(ev, fromPopstate) {
     if (!ev) return;
+    _stopThermalRefreshPolling();
     if (_syncPushInterval) { clearInterval(_syncPushInterval); _syncPushInterval = null; }
     if (window._syncRefetchInterval) { clearInterval(window._syncRefetchInterval); window._syncRefetchInterval = null; }
     currentEvent = ev;
@@ -225,6 +229,9 @@
     } finally {
       _hideEventLoading();
       if (selector) selector.disabled = false;
+    }
+    if (ev.analysis_mode === 'thermal_monitoring') {
+      _startThermalRefreshPolling(ev.id);
     }
 
     // Sync replay clock with server
@@ -335,9 +342,13 @@
     var forest = currentEvent && currentEvent.monitoring_focus === 'forest';
     if (mode === 'classification') {
       legend.innerHTML =
-        '<div class="leg-row"><span class="leg-swatch" style="background:#ff8800;opacity:.8"></span>Industrial source</div>' +
-        '<div class="leg-row"><span class="leg-swatch" style="background:#2eaa58;opacity:.8"></span>Natural source</div>' +
-        '<div class="leg-row"><span class="leg-swatch" style="background:#888;opacity:.8"></span>Unknown source</div>';
+        '<div class="leg-row"><span class="leg-swatch" style="background:#dc2626;opacity:.8"></span>Industrial fire</div>' +
+        '<div class="leg-row"><span class="leg-swatch" style="background:#a855f7;opacity:.8"></span>Gas flare</div>' +
+        '<div class="leg-row"><span class="leg-swatch" style="background:#eab308;opacity:.8"></span>Agricultural burning</div>' +
+        '<div class="leg-row"><span class="leg-swatch" style="background:#8b5e3c;opacity:.8"></span>Mining activity</div>' +
+        '<div class="leg-row"><span class="leg-swatch" style="background:#16a34a;opacity:.8"></span>Wildfire</div>' +
+        '<div class="leg-row"><span class="leg-swatch" style="background:#f97316;opacity:.8"></span>Industrial process heat</div>' +
+        '<div class="leg-row"><span class="leg-swatch" style="background:#6b7280;opacity:.8"></span>Unknown / review</div>';
     } else if (mode === 'persistent') {
       var persistentColors = forest
         ? ['#6d28d9', '#a855f7', '#d8b4fe']
@@ -364,6 +375,74 @@
         }
       });
     });
+  }
+
+  function _renderThermalRefreshStatus(status) {
+    var el = document.getElementById('thermal-refresh-status');
+    if (!el) return;
+    var state = status && status.status;
+    var observed = status && status.last_observed_at;
+    var refreshed = status && status.last_success_at;
+    var intervalMs = Number(status && status.interval_hours || 4) * 3600000;
+    var stale = refreshed && Date.now() - new Date(refreshed).getTime() > intervalMs * 2;
+
+    if (state === 'running') {
+      el.className = 'thermal-refresh-status updating';
+      el.textContent = '↻ Updating FIRMS data…';
+    } else if (state === 'failed' || stale) {
+      el.className = 'thermal-refresh-status stale';
+      el.textContent = '⚠ Data refresh delayed · showing last successful data';
+    } else if (state === 'succeeded') {
+      el.className = 'thermal-refresh-status live';
+      el.textContent = '● NRT · latest observation ' + (observed ? fmtDateTime(observed) : 'unavailable');
+    } else if (status && status.enabled === false) {
+      el.className = 'thermal-refresh-status stale';
+      el.textContent = 'Historical data · automatic refresh disabled';
+    } else {
+      el.className = 'thermal-refresh-status';
+      el.textContent = 'NASA FIRMS near-real-time · awaiting scheduled refresh';
+    }
+  }
+
+  function _stopThermalRefreshPolling() {
+    if (_thermalRefreshPoll) clearInterval(_thermalRefreshPoll);
+    _thermalRefreshPoll = null;
+    _thermalLastObservedMs = null;
+  }
+
+  function _startThermalRefreshPolling(eventId) {
+    _stopThermalRefreshPolling();
+    var latest = _timestepsDone.length ? _timestepsDone[_timestepsDone.length - 1] : null;
+    _thermalLastObservedMs = latest
+      ? new Date(latest.nearest_t1 || latest.slot_time).getTime()
+      : null;
+
+    var poll = async function() {
+      if (!currentEvent || currentEvent.id !== eventId) return;
+      try {
+        var status = await window.API.getThermalRefreshStatus(eventId);
+        _renderThermalRefreshStatus(status);
+        var observedMs = status.last_observed_at
+          ? new Date(status.last_observed_at).getTime()
+          : null;
+        if (
+          observedMs != null
+          && _thermalLastObservedMs != null
+          && observedMs !== _thermalLastObservedMs
+        ) {
+          _thermalLastObservedMs = observedMs;
+          await loadTimesteps(eventId);
+          _renderThermalRefreshStatus(status);
+        } else if (observedMs != null) {
+          _thermalLastObservedMs = observedMs;
+        }
+      } catch (error) {
+        _renderThermalRefreshStatus({ status: 'failed' });
+      }
+    };
+
+    poll();
+    _thermalRefreshPoll = setInterval(poll, THERMAL_STATUS_POLL_MS);
   }
 
   function _mergeThermalActivity(fireCtx, geojson) {
@@ -431,6 +510,9 @@
         return Number((feature.properties || {}).night_ratio || 0);
       }).concat([0])) : null,
       classification_counts: classified ? countValues('source_class') : {},
+      emergency_candidate_count: classified
+        ? countTruthy('is_emergency_candidate')
+        : null,
       classification_mean_confidence: classified && features.length
         ? features.reduce(function(total, feature) {
             return total + Number((feature.properties || {}).classification_confidence || 0);
@@ -509,6 +591,9 @@
             '<span id="ts-gap-badge" class="ts-gap"></span>' +
           '</div>' +
         '</div>' +
+        (currentEvent && currentEvent.analysis_mode === 'thermal_monitoring'
+          ? '<div id="thermal-refresh-status" class="thermal-refresh-status">NASA FIRMS near-real-time · checking status…</div>'
+          : '') +
       '</div>';
 
     setGapBadge(done[initialIdx]);
@@ -679,6 +764,15 @@
   }
 
   function _initForecastSlider(weatherData) {
+    // Forecast horizons belong to the wildfire spread workflow. Thermal
+    // monitoring replays observed detections and does not currently generate
+    // future source classifications, so showing this control would imply a
+    // forecasting capability that is not present.
+    if (currentEvent && currentEvent.analysis_mode === 'thermal_monitoring') {
+      _hideForecastSlider();
+      return;
+    }
+
     currentWeather = weatherData || [];
     var section = document.getElementById('fcast-section');
     var titleEl = document.getElementById('fcast-section-title');

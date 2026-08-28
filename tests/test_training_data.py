@@ -84,7 +84,12 @@ def _observations() -> pd.DataFrame:
 class TrainingDataTests(unittest.TestCase):
     def test_class_contract_has_confirmed_other_and_no_unknown_class(self):
         values = {item.value for item in TrainingClass}
-        self.assertIn("other_confirmed", values)
+        self.assertIn("industrial_fire", values)
+        self.assertIn("gas_flare", values)
+        self.assertIn("mining_activity", values)
+        self.assertIn("wildfire", values)
+        self.assertIn("industrial_process_heat", values)
+        self.assertIn("agricultural_burning", values)
         self.assertNotIn("other_or_unknown", values)
 
     def test_ambiguous_and_tier_c_records_cannot_enter_supervision(self):

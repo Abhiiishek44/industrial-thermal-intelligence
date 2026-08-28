@@ -208,6 +208,14 @@ body.light .home-sidebar { background: rgba(255,255,255,.92); }
 .ts-gap         { font-size: 10px; font-weight: 600; }
 .ts-gap.ok      { color: var(--success); }
 .ts-gap.warn    { color: var(--warn); }
+.thermal-refresh-status {
+  margin-top: 7px; padding: 6px 8px; border: 1px solid var(--border);
+  border-radius: 6px; color: var(--text2); background: var(--surface2);
+  font-size: 9px; line-height: 1.35;
+}
+.thermal-refresh-status.live { color: var(--success); border-color: color-mix(in srgb, var(--success) 45%, var(--border)); }
+.thermal-refresh-status.updating { color: var(--accent); }
+.thermal-refresh-status.stale { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); }
 
 /* Legend */
 .leg-row    { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--text2); margin-bottom: 4px; }

@@ -1,6 +1,7 @@
 """Industrial thermal-monitoring data preparation."""
 
 from pipeline.thermal.history import (
+    collect_latest_firms,
     collect_firms_history,
     ensure_thermal_history,
     load_history_metadata,
@@ -15,6 +16,7 @@ from pipeline.thermal.context import (
 )
 from pipeline.thermal.persistence import (
     aggregate_multisensor_observations,
+    build_classification_candidates,
     build_persistent_sources,
     ensure_persistence_analysis,
     get_persistence_settings,
@@ -28,6 +30,7 @@ from pipeline.thermal.classification import (
 )
 
 __all__ = [
+    "collect_latest_firms",
     "collect_firms_history",
     "ensure_thermal_history",
     "load_history_metadata",
@@ -38,6 +41,7 @@ __all__ = [
     "ensure_thermal_context",
     "load_context_metadata",
     "aggregate_multisensor_observations",
+    "build_classification_candidates",
     "build_persistent_sources",
     "ensure_persistence_analysis",
     "get_persistence_settings",
