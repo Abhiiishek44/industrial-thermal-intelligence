@@ -8,6 +8,9 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/leaflet-velocity@2.1.2/dist/leaflet-velocity.js"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-velocity@2.1.2/dist/leaflet-velocity.css"/>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body class="dark">
@@ -138,6 +141,20 @@
     <!-- Map (full remaining width) -->
     <div id="event-map-wrap">
       <div id="event-map"></div>
+      <div id="tactical-hud" class="hud-top-left glass-panel">
+        <span class="hud-dot"></span>
+        <span class="hud-label">Tactical View</span>
+      </div>
+      <div id="alert-hud" class="hud-top-right glass-panel">
+        <div class="hud-alert-header">
+          <span class="hud-alert-title"><span class="hud-alert-dot"></span> Active Alerts</span>
+          <span class="hud-alert-time" id="alert-hud-time">Live</span>
+        </div>
+        <div class="hud-alert-body" id="alert-hud-body">
+          Thermal monitoring active
+          <br><span class="hud-alert-highlight" id="alert-hud-highlight">FRP Strength: Normal</span>
+        </div>
+      </div>
       <div id="field-report-actions" class="field-report-actions" aria-label="Field intelligence actions">
         <button type="button" class="field-report-action" data-report-type="fire_report">🔥 Fire Report</button>
         <button type="button" class="field-report-action" data-report-type="info">ℹ️ Info</button>
