@@ -95,79 +95,89 @@
       return entries.length ? entries.join('<br>') : '—';
     };
 
+    const frpSumDisplay = fire.frp_sum != null ? Number(fire.frp_sum).toLocaleString(undefined, {minimumFractionDigits:1, maximumFractionDigits:2}) : '—';
+    const frpMeanDisplay = thermal.frp_mean_mw != null ? Number(thermal.frp_mean_mw).toFixed(2) : '—';
+    const detCount = thermal.detection_count != null ? thermal.detection_count : (fire.n_hotspots || 0);
+
+    const insideCount = thermal.inside_industrial_area_count != null ? thermal.inside_industrial_area_count : 0;
+    const nearCount = thermal.near_industrial_facility_count != null ? thermal.near_industrial_facility_count : 0;
+    const totalHits = insideCount + nearCount;
+
+    // Landcover distribution
+    const lcBare = landcover['bare'] || landcover['Bare land'] || 0;
+    const lcVeg = (landcover['cropland'] || 0) + (landcover['forest'] || 0) + (landcover['shrubland'] || 0);
+    const lcBuilt = landcover['built_up'] || landcover['Built-up'] || 0;
+    const lcTotal = Math.max(1, lcBare + lcVeg + lcBuilt);
+
+    const pctBare = Math.round((lcBare / lcTotal) * 100);
+    const pctVeg = Math.round((lcVeg / lcTotal) * 100);
+    const pctBuilt = Math.round((lcBuilt / lcTotal) * 100);
+
     el.innerHTML =
-      '<div class="dash-card">' +
-        '<div class="dash-card-title">Thermal detections</div>' +
-        '<div style="font-size:10px;color:var(--text2);margin-bottom:5px">' + viewLabel + '</div>' +
-        '<table class="stat-table">' +
-          (persistent ? '<tr><td>Persistent sources</td><td>' + v(thermal.persistent_source_count, 0) + '</td></tr>' : '') +
-          '<tr><td>Aggregated detections</td><td>' + v(thermal.detection_count != null ? thermal.detection_count : fire.n_hotspots, 0) + '</td></tr>' +
-          '<tr><td>Raw observations</td><td>' + v(thermal.raw_observation_count != null ? thermal.raw_observation_count : thermal.detection_count, 0) + '</td></tr>' +
-          '<tr><td>FRP total</td><td>' + v(fire.frp_sum, 2, 'MW') + '</td></tr>' +
-          '<tr><td>FRP mean</td><td>' + v(thermal.frp_mean_mw, 2, 'MW') + '</td></tr>' +
-          '<tr><td>FRP maximum</td><td>' + v(thermal.frp_max_mw, 2, 'MW') + '</td></tr>' +
-          '<tr><td>Max brightness</td><td>' + v(thermal.brightness_ti4_max_k, 1, 'K') + '</td></tr>' +
-        '</table>' +
+      '<!-- Tile 1: Thermal Activity -->' +
+      '<div class="data-card p-5 flex flex-col gap-3 relative overflow-hidden" style="min-width:240px">' +
+        '<div class="font-label-caps text-label-caps text-on-surface-variant uppercase tracking-wider" style="font-size:10px;color:var(--text2);font-weight:700">Anomalies Detected (' + viewLabel + ')</div>' +
+        '<div class="flex items-end justify-between mt-1" style="display:flex;align-items:baseline;justify-content:space-between;margin-top:4px">' +
+          '<span class="font-data-lg text-[32px] leading-none text-on-background font-bold tracking-tight" style="font-size:26px;font-weight:800;font-family:\'JetBrains Mono\',monospace;color:var(--text)">' + frpSumDisplay + '<span class="text-[14px] text-on-surface-variant ml-1 font-normal" style="font-size:12px;color:var(--text2);margin-left:4px">MW</span></span>' +
+        '</div>' +
+        '<div class="mt-4 flex justify-between text-on-surface-variant pt-4 border-t border-outline-variant/50" style="display:flex;justify-content:space-between;border-top:1px solid var(--border);padding-top:8px;margin-top:8px">' +
+          '<div class="flex flex-col"><span class="font-label-caps text-[10px] uppercase" style="font-size:9px;color:var(--text2)">MEAN</span><span class="font-data-sm text-data-sm text-on-background font-medium" style="font-size:11px;font-weight:700;font-family:\'JetBrains Mono\',monospace">' + frpMeanDisplay + ' MW</span></div>' +
+          '<div class="flex flex-col text-right"><span class="font-label-caps text-[10px] uppercase" style="font-size:9px;color:var(--text2)">COUNT</span><span class="font-data-sm text-data-sm text-on-background font-medium" style="font-size:11px;font-weight:700;font-family:\'JetBrains Mono\',monospace">' + vn(detCount) + '</span></div>' +
+        '</div>' +
       '</div>' +
 
-      (persistent ? '<div class="dash-card">' +
-        '<div class="dash-card-title">Persistence</div>' +
-        '<table class="stat-table">' +
-          '<tr><td>Levels</td><td>' + countList(thermal.persistence_level_counts || {}) + '</td></tr>' +
-          '<tr><td>Highest active days</td><td>' + v(thermal.highest_active_days, 0) + '</td></tr>' +
-          '<tr><td>Longest duration</td><td>' + v(thermal.longest_duration_days, 1, 'days') + '</td></tr>' +
-          '<tr><td>Highest night recurrence</td><td>' + v(thermal.highest_night_ratio != null ? thermal.highest_night_ratio * 100 : null, 0, '%') + '</td></tr>' +
-        '</table>' +
-      '</div>' : '') +
-
-      '<div class="dash-card">' +
-        '<div class="dash-card-title">Industrial context</div>' +
-        '<table class="stat-table">' +
-          '<tr><td>Inside industrial zone</td><td>' + vn(thermal.inside_industrial_area_count) + '</td></tr>' +
-          '<tr><td>Near facility</td><td>' + vn(thermal.near_industrial_facility_count) + '</td></tr>' +
-          '<tr><td>Nearest industry</td><td>' + text(industries.join(', ')) + '</td></tr>' +
-        '</table>' +
+      '<!-- Tile 2: Industrial Context -->' +
+      '<div class="data-card p-5 flex flex-col gap-3 relative overflow-hidden" style="min-width:210px">' +
+        '<div class="font-label-caps text-label-caps text-on-surface-variant uppercase tracking-wider" style="font-size:10px;color:var(--text2);font-weight:700">Proximity Impact</div>' +
+        '<div class="flex items-end justify-between mt-1" style="display:flex;align-items:baseline;justify-content:space-between;margin-top:4px">' +
+          '<span class="font-data-lg text-[32px] leading-none text-on-background font-bold tracking-tight" style="font-size:26px;font-weight:800;font-family:\'JetBrains Mono\',monospace;color:var(--text)">' + vn(totalHits) + '<span class="text-[14px] text-on-surface-variant ml-1 font-normal" style="font-size:12px;color:var(--text2);margin-left:4px">Hits</span></span>' +
+        '</div>' +
+        '<div class="mt-4 flex flex-col gap-2 pt-4 border-t border-outline-variant/50" style="border-top:1px solid var(--border);padding-top:8px;margin-top:8px">' +
+          '<div style="display:flex;justify-content:space-between;font-size:11px"><span style="color:var(--text2)">Inside Zone</span><span style="font-weight:700;font-family:\'JetBrains Mono\',monospace">' + vn(insideCount) + '</span></div>' +
+          '<div style="display:flex;justify-content:space-between;font-size:11px"><span style="color:var(--text2)">Near Facility</span><span style="font-weight:700;font-family:\'JetBrains Mono\',monospace">' + vn(nearCount) + '</span></div>' +
+        '</div>' +
       '</div>' +
 
-      '<div class="dash-card">' +
-        '<div class="dash-card-title">Observation context</div>' +
-        '<table class="stat-table">' +
-          '<tr><td>Land cover</td><td>' + countList(landcover) + '</td></tr>' +
-          '<tr><td>Confidence</td><td>' + countList(confidence) + '</td></tr>' +
-          '<tr><td>Satellite</td><td>' + text((thermal.satellites || []).join(', ')) + '</td></tr>' +
-        '</table>' +
+      '<!-- Tile 3: Spread Distribution -->' +
+      '<div class="data-card p-5 flex flex-col gap-3 relative overflow-hidden" style="min-width:220px">' +
+        '<div class="font-label-caps text-label-caps text-on-surface-variant uppercase tracking-wider" style="font-size:10px;color:var(--text2);font-weight:700">Spread Distribution</div>' +
+        '<div style="display:flex;flex-direction:column;gap:6px;margin-top:6px">' +
+          '<div><div style="display:flex;justify-content:space-between;font-size:10px;margin-bottom:2px"><span>Bare Land</span><span style="font-family:\'JetBrains Mono\',monospace;color:var(--text2)">' + vn(lcBare) + '</span></div><div style="width:100%;height:4px;background:var(--border);border-radius:99px;overflow:hidden"><div style="width:' + pctBare + '%;height:100%;background:var(--warn);border-radius:99px"></div></div></div>' +
+          '<div><div style="display:flex;justify-content:space-between;font-size:10px;margin-bottom:2px"><span>Vegetation</span><span style="font-family:\'JetBrains Mono\',monospace;color:var(--text2)">' + vn(lcVeg) + '</span></div><div style="width:100%;height:4px;background:var(--border);border-radius:99px;overflow:hidden"><div style="width:' + pctVeg + '%;height:100%;background:var(--accent);border-radius:99px"></div></div></div>' +
+          '<div><div style="display:flex;justify-content:space-between;font-size:10px;margin-bottom:2px"><span>Built Up</span><span style="font-family:\'JetBrains Mono\',monospace;color:var(--text2)">' + vn(lcBuilt) + '</span></div><div style="width:100%;height:4px;background:var(--border);border-radius:99px;overflow:hidden"><div style="width:' + pctBuilt + '%;height:100%;background:var(--danger);border-radius:99px"></div></div></div>' +
+        '</div>' +
       '</div>' +
 
-      '<div class="dash-card">' +
-        '<div class="dash-card-title">Source classification</div>' +
+      '<!-- Tile 4: Source Classification -->' +
+      '<div class="data-card p-5 flex flex-col gap-3 relative overflow-hidden" style="min-width:220px">' +
+        '<div class="font-label-caps text-label-caps text-on-surface-variant uppercase tracking-wider" style="font-size:10px;color:var(--text2);font-weight:700">Source Classification</div>' +
         (classified
           ? '<table class="stat-table">' +
-              '<tr><td>Classes</td><td>' + countList(thermal.classification_counts || {}) + '</td></tr>' +
-              '<tr><td>Industrial-fire alerts</td><td>' + vn(thermal.emergency_candidate_count) + '</td></tr>' +
-              '<tr><td>Mean confidence</td><td>' + v(thermal.classification_mean_confidence != null ? thermal.classification_mean_confidence * 100 : null, 0, '%') + '</td></tr>' +
-              '<tr><td>Method</td><td>' + text((thermal.classification_method || 'explainable_rules_v2').replaceAll('_', ' ')) + '</td></tr>' +
-            '</table>' +
-            '<div style="font-size:10px;opacity:.6;margin-top:5px">Rule-based baseline, not a trained ML model.</div>'
-          : '<div style="font-size:12px;line-height:1.5">' +
-              '<b>Open Source Classification view</b><br>' +
-              '<span style="opacity:.65">Classifies persistent sources and short-lived fire episodes using facility, temporal and land-cover evidence.</span>' +
+              '<tr><td>Alerts</td><td style="font-family:\'JetBrains Mono\',monospace">' + vn(thermal.emergency_candidate_count) + '</td></tr>' +
+              '<tr><td>Confidence</td><td style="font-family:\'JetBrains Mono\',monospace">' + v(thermal.classification_mean_confidence != null ? thermal.classification_mean_confidence * 100 : null, 0, '%') + '</td></tr>' +
+            '</table>'
+          : '<div style="font-size:11px;line-height:1.4;margin-top:4px">' +
+              '<b style="color:var(--accent)">Source Analysis Active</b><br>' +
+              '<span style="color:var(--text2)">Classifying persistent thermal anomalies & short-lived fire episodes.</span>' +
             '</div>') +
       '</div>' +
 
-      '<div class="dash-card">' +
-        '<div class="dash-card-title">Weather</div>' +
+      '<!-- Tile 5: Weather System Health -->' +
+      '<div class="data-card" style="min-width:210px">' +
+        '<div class="dash-card-title">System Weather</div>' +
         '<div id="fcast-weather" class="fcast-weather">' +
           (wf.length ? weatherSummary(wf[0]) : '<span style="opacity:.4;font-size:10px">Loading…</span>') +
         '</div>' +
       '</div>' +
 
-      '<div class="dash-card dash-card-wide">' +
+      '<!-- Tile 6: Wind Forecast -->' +
+      '<div class="data-card dash-card-wide">' +
         '<div class="dash-card-title">Wind Forecast +12h</div>' +
         '<div id="dash-wind-sparkline">' + windSparkline(wf) + '</div>' +
         '<div id="dash-wind-labels" class="forecast-labels">' +
           wf.filter((_, i) => i % 3 === 0).map(f => {
             const spd = (f.wind_speed_kmh || f.speed_kmh);
-            return '<span>+' + f.hour + 'h<br><b>' + (spd != null ? spd.toFixed(0) : '—') + '</b></span>';
+            return '<span>+' + f.hour + 'h<br><b style="font-family:\'JetBrains Mono\',monospace">' + (spd != null ? spd.toFixed(0) : '—') + '</b></span>';
           }).join('') +
         '</div>' +
       '</div>';
