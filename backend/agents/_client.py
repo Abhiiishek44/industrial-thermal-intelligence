@@ -49,7 +49,7 @@ def _claude_stream(system: str, messages: list[dict]) -> Generator[str, None, No
 
 # ── Gemini ──────────────────────────────────────────────────────────────────────
 
-_GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+_GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 
 
 def _gemini_call(system: str, user_msg: str) -> str:
