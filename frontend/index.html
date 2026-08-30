@@ -25,7 +25,7 @@
   </div>
   <div id="breadcrumb" class="breadcrumb hidden"></div>
   <div class="header-spacer"></div>
-  <a class="header-btn" href="https://github.com/geo-raypan/wildfire-decision-support" target="_blank" rel="noopener" title="View on GitHub"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:middle;margin-right:4px"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>GitHub</a>
+  <a class="header-btn" href="https://github.com/Abhiiishek44/industrial-thermal-intelligence" target="_blank" rel="noopener" title="View on GitHub"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:middle;margin-right:4px"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>GitHub</a>
   <span id="auth-user-label"></span>
   <button class="header-btn hidden" id="auth-logout-btn">Sign Out</button>
   <button class="header-btn" id="theme-toggle" aria-label="Toggle theme"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
@@ -79,7 +79,7 @@
       <div class="lp-section-title hidden" id="thermal-view-title">Thermal View</div>
       <div class="pred-type-wrap hidden" id="thermal-view-section">
         <label class="pred-type-opt">
-          <input type="radio" name="thermal-view" value="5d" checked>
+          <input type="radio" name="thermal-view" value="5d">
           <span class="pred-type-info"><span class="pred-type-label">5-Day Activity</span><span class="pred-type-hint">Cumulative detections through the selected time</span></span>
         </label>
         <label class="pred-type-opt">
@@ -95,7 +95,7 @@
           <span class="pred-type-info"><span class="pred-type-label">Persistent Sources</span><span class="pred-type-hint">Recurring spatial clusters over 30 days</span></span>
         </label>
         <label class="pred-type-opt">
-          <input type="radio" name="thermal-view" value="classification">
+          <input type="radio" name="thermal-view" value="classification" checked>
           <span class="pred-type-info"><span class="pred-type-label">Source Classification</span><span class="pred-type-hint">Industrial fire, flare, crop burn, mining, wildfire and process heat</span></span>
         </label>
       </div>
@@ -145,21 +145,11 @@
         <span class="hud-dot"></span>
         <span class="hud-label">Tactical View</span>
       </div>
-      <div id="alert-hud" class="hud-top-right glass-panel">
-        <div class="hud-alert-header">
-          <span class="hud-alert-title"><span class="hud-alert-dot"></span> Active Alerts</span>
-          <span class="hud-alert-time" id="alert-hud-time">Live</span>
-        </div>
-        <div class="hud-alert-body" id="alert-hud-body">
-          Thermal monitoring active
-          <br><span class="hud-alert-highlight" id="alert-hud-highlight">FRP Strength: Normal</span>
-        </div>
-      </div>
       <div id="field-report-actions" class="field-report-actions" aria-label="Field intelligence actions">
-        <button type="button" class="field-report-action" data-report-type="fire_report">🔥 Fire Report</button>
-        <button type="button" class="field-report-action" data-report-type="info">ℹ️ Info</button>
-        <button type="button" class="field-report-action" data-report-type="request_help">🆘 Need Help</button>
-        <button type="button" class="field-report-action" data-report-type="offer_help">🤝 Offer Help</button>
+        <button type="button" class="field-report-action" data-report-type="fire_report"><span class="field-report-icon" aria-hidden="true">FR</span><span>Fire Report</span></button>
+        <button type="button" class="field-report-action" data-report-type="info"><span class="field-report-icon" aria-hidden="true">i</span><span>Info</span></button>
+        <button type="button" class="field-report-action" data-report-type="request_help"><span class="field-report-icon" aria-hidden="true">?</span><span>Need Help</span></button>
+        <button type="button" class="field-report-action" data-report-type="offer_help"><span class="field-report-icon" aria-hidden="true">+</span><span>Offer Help</span></button>
         <span id="crowd-report-count" class="crowd-badge hidden" aria-label="Field report count">0</span>
       </div>
       <div id="prediction-status-bar" class="hidden">
@@ -401,10 +391,10 @@
     <form id="crowd-submit-form" class="crowd-form">
       <label>Report Type</label>
       <div class="crowd-type-grid" role="group" aria-label="Report type">
-        <button type="button" class="crowd-type-btn active" data-report-type="fire_report">🔥<span>Fire Report</span></button>
-        <button type="button" class="crowd-type-btn" data-report-type="info">ℹ️<span>Info</span></button>
-        <button type="button" class="crowd-type-btn" data-report-type="request_help">🆘<span>Need Help</span></button>
-        <button type="button" class="crowd-type-btn" data-report-type="offer_help">🤝<span>Offer Help</span></button>
+        <button type="button" class="crowd-type-btn active" data-report-type="fire_report"><span class="field-report-icon" aria-hidden="true">FR</span><span>Fire Report</span></button>
+        <button type="button" class="crowd-type-btn" data-report-type="info"><span class="field-report-icon" aria-hidden="true">i</span><span>Info</span></button>
+        <button type="button" class="crowd-type-btn" data-report-type="request_help"><span class="field-report-icon" aria-hidden="true">?</span><span>Need Help</span></button>
+        <button type="button" class="crowd-type-btn" data-report-type="offer_help"><span class="field-report-icon" aria-hidden="true">+</span><span>Offer Help</span></button>
       </div>
       <input type="hidden" id="crowd-post-type" value="fire_report">
 
@@ -415,9 +405,9 @@
       <div class="crowd-loc-row">
         <input type="number" id="crowd-lat" class="crowd-input" placeholder="Latitude"  step="0.00001">
         <input type="number" id="crowd-lon" class="crowd-input" placeholder="Longitude" step="0.00001">
-        <button type="button" id="crowd-pick-btn" class="crowd-pick-btn" title="Click map to pick location">📍</button>
+        <button type="button" id="crowd-pick-btn" class="crowd-pick-btn" title="Click map to pick location">Pick</button>
       </div>
-      <div class="crowd-location-hint">Use 📍 and click the map. If left blank, the visible map centre is used.</div>
+      <div class="crowd-location-hint">Use Pick and click the map. If left blank, the visible map centre is used.</div>
 
       <label>Photo (optional)</label>
       <input type="file" id="crowd-photo" class="crowd-input" accept="image/*">
