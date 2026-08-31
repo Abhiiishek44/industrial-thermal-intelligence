@@ -51,10 +51,12 @@ POSTGRES_DB=wildfire_db
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=your_password
 
-# LLM Provider — "claude" (default) or "gemini"
+# LLM Provider — "claude" (default), "gemini", or "huggingface"
 LLM_PROVIDER=claude
 ANTHROPIC_API_KEY=your_anthropic_api_key
 GEMINI_API_KEY=your_gemini_api_key   # only needed if LLM_PROVIDER=gemini
+HF_TOKEN=your_huggingface_token      # only needed if LLM_PROVIDER=huggingface
+HF_MODEL=deepseek-ai/DeepSeek-V4-Flash
 
 # Optional integrations
 SENTINELHUB_CLIENT_ID=...       # Sentinel-2 satellite basemap

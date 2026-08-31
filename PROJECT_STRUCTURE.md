@@ -300,7 +300,7 @@ POST /api/events/:id/field-reports  (multipart/form-data)
   ├─ fields: post_type, lat, lon, description
   └─ file:   photo (optional)
 
-  1. Save photo → data/uploads/{report_id}.{ext}  (if provided)
+  1. Save photo → data/uploads/{report_id}.{ext}  (if provide)
   2. Parse EXIF GPSImgDirection → bearing (float) or null (unavailable)
   3. Insert field_reports row:
        post_type, lat, lon, description, bearing, photo_path

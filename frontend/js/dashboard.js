@@ -265,18 +265,21 @@
       // ── Population ──
       '<div class="dash-card">' +
         '<div class="dash-card-title">Population</div>' +
-        '<div class="pop-affected">' +
-          '<div class="pop-affected-num">' + vn(pop.affected_population) + '</div>' +
-          '<div class="pop-affected-lbl">Affected · in perimeter</div>' +
-        '</div>' +
-        '<div class="pop-risk-section">' +
-          '<div class="pop-risk-title">At risk</div>' +
-          '<div class="pop-risk-row">' +
-            '<div class="pop-stat risk3"><div class="pop-num">'  + vn(pop.at_risk_3h)  + '</div><div class="pop-label">+3h</div></div>' +
-            '<div class="pop-stat risk6"><div class="pop-num">'  + vn(pop.at_risk_6h)  + '</div><div class="pop-label">+6h</div></div>' +
-            '<div class="pop-stat risk12"><div class="pop-num">' + vn(pop.at_risk_12h) + '</div><div class="pop-label">+12h</div></div>' +
-          '</div>' +
-        '</div>' +
+        (pop.data_available === false
+          ? '<div class="dash-empty">Population exposure unavailable<br><small>' +
+              text(pop.reason || 'No population source configured') + '</small></div>'
+          : '<div class="pop-affected">' +
+              '<div class="pop-affected-num">' + vn(pop.affected_population) + '</div>' +
+              '<div class="pop-affected-lbl">Affected · in perimeter</div>' +
+            '</div>' +
+            '<div class="pop-risk-section">' +
+              '<div class="pop-risk-title">At risk</div>' +
+              '<div class="pop-risk-row">' +
+                '<div class="pop-stat risk3"><div class="pop-num">'  + vn(pop.at_risk_3h)  + '</div><div class="pop-label">+3h</div></div>' +
+                '<div class="pop-stat risk6"><div class="pop-num">'  + vn(pop.at_risk_6h)  + '</div><div class="pop-label">+6h</div></div>' +
+                '<div class="pop-stat risk12"><div class="pop-num">' + vn(pop.at_risk_12h) + '</div><div class="pop-label">+12h</div></div>' +
+              '</div>' +
+            '</div>') +
       '</div>' +
 
       // ── Fire ──

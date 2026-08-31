@@ -258,6 +258,7 @@ def get_thermal_refresh_status(event_id: int):
         'enabled': configured,
         'interval_hours': settings['interval_hours'],
         'lookback_days': settings['lookback_days'],
+        'failure_retry_minutes': settings['failure_retry_minutes'],
     }), 200
 
 

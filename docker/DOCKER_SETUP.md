@@ -37,10 +37,12 @@ POSTGRES_DB=wildfire_db
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=your_password  # must be identical to DB_PASSWORD
 
-# LLM Provider — "claude" (default) or "gemini"
+# LLM Provider — "claude" (default), "gemini", or "huggingface"
 LLM_PROVIDER=claude
 ANTHROPIC_API_KEY=your_anthropic_api_key
 GEMINI_API_KEY=your_gemini_api_key   # only needed if LLM_PROVIDER=gemini
+HF_TOKEN=your_huggingface_token      # only needed if LLM_PROVIDER=huggingface
+HF_MODEL=deepseek-ai/DeepSeek-V4-Flash
 
 # Optional integrations
 SENTINELHUB_CLIENT_ID=...       # Sentinel-2 satellite basemap
@@ -181,5 +183,5 @@ PostgreSQL skips `init.sql` when a volume already exists. Run:
 docker compose down -v && docker compose up --build
 ```
 
-**`ANTHROPIC_API_KEY` / `GEMINI_API_KEY` errors**  
+**`ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `HF_TOKEN` errors**
 Ensure the correct key is set in `.env` and `LLM_PROVIDER` matches the key you provided.

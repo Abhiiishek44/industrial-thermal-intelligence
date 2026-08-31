@@ -15,13 +15,126 @@ import geopandas as gpd
 
 log = logging.getLogger(__name__)
 
-def population_counts(pop_path: Path, perimeter_geom, risk: dict,
-                      fire_year: int | None) -> dict:
+WILDFIRE_EXPOSURE_FIELDS = (
+    "affected_population", "at_risk_3h", "at_risk_6h", "at_risk_12h",
+)
+THERMAL_EXPOSURE_FIELDS = ("within_1km", "within_3km", "within_5km")
+
+
+def unavailable_population(analysis_mode: str, reason: str) -> dict:
+    """Return an explicit missing-data contract; missing never means zero."""
+    thermal = analysis_mode == "thermal_monitoring"
+    fields = THERMAL_EXPOSURE_FIELDS if thermal else WILDFIRE_EXPOSURE_FIELDS
+    return {
+        **{field: None for field in fields},
+        "data_available": False,
+        "exposure_mode": "proximity_buffers" if thermal else "forecast_zones",
+        "reason": reason,
+        "source": None,
+    }
+
+
+def _population_in_raster(pop_path: Path, zone_geom, exclude_geom=None) -> int:
+    if zone_geom is None or zone_geom.is_empty:
+        return 0
+
+    import rasterio
+    from pyproj import Transformer
+    from rasterio.mask import mask
+    from shapely.geometry import mapping
+    from shapely.ops import transform
+
+    zone = zone_geom.difference(exclude_geom) if exclude_geom is not None else zone_geom
+    if zone.is_empty:
+        return 0
+    with rasterio.open(pop_path) as dataset:
+        if dataset.crs and str(dataset.crs) != "EPSG:4326":
+            transformer = Transformer.from_crs("EPSG:4326", dataset.crs, always_xy=True)
+            zone = transform(transformer.transform, zone)
+        try:
+            values, _ = mask(dataset, [mapping(zone)], crop=True, filled=False)
+        except ValueError:
+            return 0
+        band = values[0]
+        return max(0, int(round(float(band.sum())))) if band.count() else 0
+
+
+def _buffer_wgs84(geom, distance_m: float):
+    if geom is None or geom.is_empty:
+        return None
+    projected = gpd.GeoSeries([geom], crs="EPSG:4326").to_crs("EPSG:3857")
+    return projected.buffer(distance_m).to_crs("EPSG:4326").iloc[0]
+
+
+def population_counts(
+    pop_path: Path,
+    perimeter_geom,
+    risk: dict,
+    fire_year: int | None,
+    *,
+    analysis_mode: str = "wildfire_prediction",
+    hotspot_geom=None,
+) -> dict:
     if not pop_path.exists():
         log.info("[spatial] event population cache not configured")
+        return unavailable_population(
+            analysis_mode,
+            "Population dataset is not configured for this region.",
+        )
+
+    if pop_path.suffix.lower() in {".tif", ".tiff"}:
+        resolution_m = 1_000 if "1km" in pop_path.name.lower() else 100
+        metadata_path = pop_path.with_name("population_metadata.json")
+        if metadata_path.exists():
+            try:
+                resolution_m = int(json.loads(metadata_path.read_text()).get("resolution_m", resolution_m))
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                pass
+        source = {
+            "provider": "WorldPop",
+            "dataset_year": 2026,
+            "resolution_m": resolution_m,
+            "units": "estimated people",
+        }
+        if analysis_mode == "thermal_monitoring":
+            if hotspot_geom is None or hotspot_geom.is_empty:
+                return unavailable_population(
+                    analysis_mode,
+                    "No thermal detection geometry is available for exposure analysis.",
+                )
+            b1 = _buffer_wgs84(hotspot_geom, 1_000)
+            b3 = _buffer_wgs84(hotspot_geom, 3_000)
+            b5 = _buffer_wgs84(hotspot_geom, 5_000)
+            return {
+                "within_1km": _population_in_raster(pop_path, b1),
+                "within_3km": _population_in_raster(pop_path, b3),
+                "within_5km": _population_in_raster(pop_path, b5),
+                "data_available": True,
+                "exposure_mode": "proximity_buffers",
+                "reason": None,
+                "source": source,
+            }
+
+        r3, r6, r12 = risk.get(3), risk.get(6), risk.get(12)
+        from shapely.ops import unary_union as _union
+
+        def union_geoms(*geoms):
+            valid = [geom for geom in geoms if geom is not None]
+            return _union(valid) if valid else None
+
         return {
-            **{f: 0 for f in ["affected_population", "at_risk_3h", "at_risk_6h", "at_risk_12h"]},
-            "data_available": False,
+            "affected_population": _population_in_raster(pop_path, perimeter_geom),
+            "at_risk_3h": _population_in_raster(pop_path, r3, perimeter_geom),
+            "at_risk_6h": _population_in_raster(
+                pop_path, r6, union_geoms(perimeter_geom, r3)
+            ),
+            "at_risk_12h": _population_in_raster(
+                pop_path, r12, union_geoms(perimeter_geom, r3, r6)
+            ),
+            "data_available": True,
+            "exposure_mode": "forecast_zones",
+            "reason": None,
+            "source": source,
         }
 
     census_year = _nearest_census_year(fire_year)
@@ -50,6 +163,13 @@ def population_counts(pop_path: Path, perimeter_geom, risk: dict,
         "at_risk_6h":          pop_in(r6,  _union_geoms(perimeter_geom, r3)),
         "at_risk_12h":         pop_in(r12, _union_geoms(perimeter_geom, r3, r6)),
         "data_available":       True,
+        "exposure_mode":        "forecast_zones",
+        "reason":               None,
+        "source": {
+            "provider": "Statistics Canada census",
+            "dataset_year": census_year,
+            "units": "people",
+        },
     }
 
 
