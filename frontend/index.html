@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Wildfire Decision Support</title>
+  <title>Industrial Thermal Intelligence</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/leaflet-velocity@2.1.2/dist/leaflet-velocity.js"></script>
@@ -18,15 +18,20 @@
 <header id="header">
   <div id="nav-home-btn" class="logo-btn">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:middle;flex-shrink:0"><path d="M13.5.67s.74 2.65.74 4.8c0 2.06-1.35 3.73-3.41 3.73-2.07 0-3.63-1.67-3.63-3.73l.03-.36C5.21 7.51 4 10.62 4 14c0 4.42 3.58 8 8 8s8-3.58 8-8C20 8.61 17.41 3.8 13.5.67zM11.71 19c-1.78 0-3.22-1.4-3.22-3.14 0-1.62 1.05-2.76 2.81-3.12 1.77-.36 3.6-1.21 4.62-2.58.39 1.29.59 2.65.59 4.04 0 2.65-2.15 4.8-4.8 4.8z"/></svg>
-    <span class="logo-text">Wildfire Decision Support</span>
+    <span class="logo-text">Industrial Thermal Intelligence</span>
   </div>
   <div id="breadcrumb" class="breadcrumb hidden"></div>
   <div class="header-spacer"></div>
-  <a class="header-btn" href="https://github.com/geo-raypan/wildfire-decision-support" target="_blank" rel="noopener" title="View on GitHub"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:middle;margin-right:4px"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>GitHub</a>
+  <button id="ai-analysis-btn" class="header-btn ai-analysis-trigger hidden" type="button" aria-label="Generate situational awareness report">
+    <span class="ai-trigger-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v5h4M9 12h7M9 16h7"/></svg></span>
+    <span class="ai-trigger-label">Create report</span>
+    <span class="ai-trigger-state" aria-hidden="true"></span>
+  </button>
+  <a class="header-btn header-github" href="https://github.com/geo-raypan/wildfire-decision-support" target="_blank" rel="noopener" title="View on GitHub"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:middle;margin-right:4px"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>GitHub</a>
   <span id="auth-user-label"></span>
   <button class="header-btn hidden" id="auth-logout-btn">Sign Out</button>
   <button class="header-btn" id="theme-toggle" aria-label="Toggle theme"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
-  <button class="header-btn dev-toggle-btn" id="dev-toggle-btn" title="Open DEV console">⚙ DEV</button>
+  <button class="header-btn dev-toggle-btn" id="dev-toggle-btn" type="button" title="Open developer console" aria-controls="dev-window" aria-expanded="false">⚙ DEV</button>
 </header>
 
 <!-- ══════════════════════════════════════════════════════════
@@ -161,6 +166,12 @@
 
   </div><!-- /event-body -->
 
+  <button id="ai-chat-launcher" class="ai-edge-launcher hidden" type="button" aria-label="Open observation assistant" title="Open observation assistant" aria-controls="ai-chat-drawer" aria-expanded="false">
+    <span class="ai-edge-launcher-icon assistant-star" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2.8c.6 5.8 3.4 8.6 9.2 9.2-5.8.6-8.6 3.4-9.2 9.2-.6-5.8-3.4-8.6-9.2-9.2 5.8-.6 8.6-3.4 9.2-9.2Z"/></svg></span>
+    <span class="ai-edge-launcher-copy"><strong>Ask AI</strong><small>Observation assistant</small></span>
+    <span class="ai-edge-launcher-arrow" aria-hidden="true">‹</span>
+  </button>
+
   <!-- Bottom dashboard -->
   <div id="bottom-panel">
     <div id="bottom-header">
@@ -184,14 +195,17 @@
 
     <!-- Modal header -->
     <div class="ai-modal-header">
-      <span class="ai-modal-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:middle;margin-right:6px"><path d="M13.5.67s.74 2.65.74 4.8c0 2.06-1.35 3.73-3.41 3.73-2.07 0-3.63-1.67-3.63-3.73l.03-.36C5.21 7.51 4 10.62 4 14c0 4.42 3.58 8 8 8s8-3.58 8-8C20 8.61 17.41 3.8 13.5.67zM11.71 19c-1.78 0-3.22-1.4-3.22-3.14 0-1.62 1.05-2.76 2.81-3.12 1.77-.36 3.6-1.21 4.62-2.58.39 1.29.59 2.65.59 4.04 0 2.65-2.15 4.8-4.8 4.8z"/></svg>Situational Awareness Report</span>
+      <div class="ai-modal-heading">
+        <span class="ai-modal-kicker">AI decision briefing</span>
+        <span class="ai-modal-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:middle;margin-right:6px"><path d="M13.5.67s.74 2.65.74 4.8c0 2.06-1.35 3.73-3.41 3.73-2.07 0-3.63-1.67-3.63-3.73l.03-.36C5.21 7.51 4 10.62 4 14c0 4.42 3.58 8 8 8s8-3.58 8-8C20 8.61 17.41 3.8 13.5.67zM11.71 19c-1.78 0-3.22-1.4-3.22-3.14 0-1.62 1.05-2.76 2.81-3.12 1.77-.36 3.6-1.21 4.62-2.58.39 1.29.59 2.65.59 4.04 0 2.65-2.15 4.8-4.8 4.8z"/></svg>Situational Awareness Report</span>
+      </div>
       <span id="ai-modal-badge" class="ai-badge"></span>
       <div class="header-spacer"></div>
       <button id="ai-enhance-crowd-btn" class="ai-enhance-btn" disabled title="Requires crowd prediction to be run first">⚡ Enhance with Crowd Data</button>
       <button id="ai-modal-close" class="modal-close-btn">✕</button>
     </div>
 
-    <!-- Modal body: report (left) + chat (right) -->
+    <!-- Modal body: report workspace -->
     <div class="ai-modal-body">
 
       <!-- Left: report -->
@@ -209,29 +223,37 @@
         </div>
       </div>
 
-      <!-- Divider -->
-      <div class="ai-col-divider"></div>
-
-      <!-- Right: chat -->
-      <div id="ai-chat-col">
-        <div class="chat-col-title">
-          Chat
-          <button id="chat-col-collapse-btn" class="chat-col-collapse-btn" title="Collapse chat">
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
-          </button>
-        </div>
-        <div id="chat-messages">
-          <div class="chat-welcome">Ask anything about this fire event and the AI analysis above.</div>
-        </div>
-        <div class="chat-input-row">
-          <textarea id="chat-input" rows="2" placeholder="Ask about evacuation routes, population at risk…"></textarea>
-          <button id="chat-send-btn">▶</button>
-        </div>
-      </div>
-
     </div><!-- /ai-modal-body -->
   </div><!-- /ai-modal -->
 </div>
+
+<!-- Main dashboard AI assistant — independent from the report -->
+<div id="ai-chat-drawer-backdrop" class="ai-chat-drawer-backdrop"></div>
+<aside id="ai-chat-drawer" class="ai-chat-drawer" aria-hidden="true" aria-label="AI assistant">
+  <div class="ai-chat-drawer-header">
+    <div class="ai-chat-brand">
+      <span class="ai-chat-brand-mark assistant-star" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2.8c.6 5.8 3.4 8.6 9.2 9.2-5.8.6-8.6 3.4-9.2 9.2-.6-5.8-3.4-8.6-9.2-9.2 5.8-.6 8.6-3.4 9.2-9.2Z"/></svg></span>
+      <div><span>Industrial thermal intelligence</span><strong>Ask AI</strong></div>
+    </div>
+    <button id="ai-chat-drawer-close" class="ai-chat-close" type="button" aria-label="Close AI assistant">✕</button>
+  </div>
+  <div class="ai-chat-context-bar">
+    <span class="ai-chat-live-dot" aria-hidden="true"></span>
+    <div><strong id="ai-chat-context-title">Current observation</strong><small id="ai-chat-context-meta">Select a timestep to begin</small></div>
+  </div>
+  <div id="chat-messages">
+    <div class="chat-welcome"><span class="chat-welcome-mark assistant-star" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2.8c.6 5.8 3.4 8.6 9.2 9.2-5.8.6-8.6 3.4-9.2 9.2-.6-5.8-3.4-8.6-9.2-9.2 5.8-.6 8.6-3.4 9.2-9.2Z"/></svg></span><strong>How can I help?</strong><p>Ask about the current observation, evidence, exposure, or recommended actions.</p></div>
+  </div>
+  <div class="chat-input-shell">
+    <div class="chat-input-row">
+      <textarea id="chat-input" rows="2" placeholder="Ask about this observation…"></textarea>
+      <button id="chat-send-btn" aria-label="Send message">
+        <svg viewBox="0 0 24 24"><path d="m5 12 14-7-4 14-3-6-7-1Z"/><path d="m12 13 7-8"/></svg>
+      </button>
+    </div>
+    <span class="chat-input-hint">AI can make mistakes. Verify critical decisions against source data.</span>
+  </div>
+</aside>
 
 <!-- ══════════════════════════════════════════════════════════
      MOBILE — FAB + backdrop
@@ -250,7 +272,7 @@
       <span id="auth-modal-title">Sign in to continue</span>
     </div>
     <p id="auth-blurb">
-      Sign in to access wildfire data, reports, and community tools.
+      Sign in to access industrial thermal observations, reports, and monitoring tools.
     </p>
     <form id="auth-form">
       <label class="auth-field">
@@ -275,23 +297,29 @@
 <!-- ══════════════════════════════════════════════════════════
      DEV CONSOLE WINDOW
 ══════════════════════════════════════════════════════════ -->
-<div id="dev-window" class="hidden">
+<div id="dev-window" class="hidden" role="dialog" aria-label="Developer console" aria-hidden="true">
   <div id="dev-window-header">
     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="opacity:.6"><path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/></svg>
     <span>DEV Console</span>
     <div class="dev-win-spacer"></div>
-    <button id="dev-window-close" title="Close">✕</button>
+    <button id="dev-window-close" type="button" title="Close developer console" aria-label="Close developer console">✕</button>
   </div>
   <div id="dev-window-body">
 
     <!-- ── Tabs ── -->
     <div class="dev-tabs">
-      <button class="dev-tab active" data-tab="dev-tab-controls">Controls</button>
-      <button class="dev-tab" data-tab="dev-tab-simulator">User Simulator</button>
+      <button class="dev-tab active" type="button" data-tab="dev-tab-controls" aria-selected="true">Controls</button>
+      <button class="dev-tab" type="button" data-tab="dev-tab-simulator" aria-selected="false">User Simulator</button>
     </div>
 
     <!-- ── Tab: Controls ── -->
     <div id="dev-tab-controls" class="dev-tab-panel">
+
+      <div class="dev-context" aria-live="polite">
+        <div><span>Region</span><strong id="dev-context-region">No region selected</strong></div>
+        <div><span>Timestep</span><strong id="dev-context-timestep">Unavailable</strong></div>
+        <div><span>Mode</span><strong id="dev-context-mode">Unknown</strong></div>
+      </div>
 
       <div class="dev-section-title">Time Control</div>
       <div class="dev-time-section">
@@ -305,7 +333,7 @@
         <div id="dev-pending-label" class="dev-pending-label" style="display:none"></div>
       </div>
 
-      <div class="dev-section-title">Prediction Engine</div>
+      <div id="dev-engine-title" class="dev-section-title">Prediction Engine</div>
       <div class="dev-pred-section">
         <button id="dev-run-pred-btn" class="dev-action-btn" disabled>▶ Run Prediction</button>
         <button id="dev-rerun-pred-btn" class="dev-action-btn dev-action-btn--secondary" disabled>↺ Rerun with Crowd Data</button>
@@ -330,8 +358,8 @@
         <button id="dev-rerun-report-crowd-btn" class="dev-action-btn dev-action-btn--secondary" disabled>↺ Re-run AI Report (Crowd)</button>
       </div>
 
-      <div class="dev-section-title">Ground Truth Overlay</div>
-      <div class="dev-gt-section">
+      <div id="dev-ground-truth-title" class="dev-section-title">Ground Truth Overlay</div>
+      <div id="dev-ground-truth-section" class="dev-gt-section">
         <label class="dev-toggle-row">
           <input type="checkbox" id="dev-actual-toggle">
           <span class="dev-toggle-label">Show actual perimeter</span>

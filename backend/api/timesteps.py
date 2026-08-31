@@ -417,12 +417,15 @@ def chat(event_id: int):
         u.chat_count += 1
         db.session.commit()
 
-    summary      = ""
-    road_summary = []
+    summary       = ""
+    road_summary  = []
+    analysis_mode = None
     if ts_id:
         result, _ = _get_event_and_ts(event_id, ts_id)
         if result:
             event_obj, ts_obj = result
+            from pipeline.event_config import get_event_config
+            analysis_mode = get_event_config(event_obj).analysis_mode
             import pandas as _pd
             ts_str  = _pd.Timestamp(ts_obj.slot_time).strftime("%Y-%m-%dT%H%M")
             ai_dir  = (_DATA_DIR / "events" / f"{event_obj.year}_{event_obj.id:04d}"
@@ -440,6 +443,12 @@ def chat(event_id: int):
                 parts.append("KEY RISKS:\n" + summary_data["key_risks"])
             if summary_data.get("immediate_actions"):
                 parts.append("IMMEDIATE ACTIONS:\n" + summary_data["immediate_actions"])
+            metadata = _read_json(ai_dir / "metadata.json") or {}
+            if metadata:
+                parts.append(
+                    "REPORT PROVENANCE AND DATA AVAILABILITY:\n"
+                    + __import__('json').dumps(metadata, ensure_ascii=False)
+                )
             for fname, label in (("risk", "RISK ANALYSIS"), ("impact", "IMPACT ANALYSIS"),
                                   ("evacuation", "EVACUATION ANALYSIS"), ("crowd", "CROWD INTELLIGENCE")):
                 d = _read_json(ai_dir / f"{fname}.json")
@@ -452,10 +461,20 @@ def chat(event_id: int):
             roads_geojson = _read_json(roads_path) or {}
             road_summary  = _build_road_summary(roads_geojson)
 
+    # Keep the assistant identity correct even before a timestep has been selected.
+    if analysis_mode is None:
+        from db.models import FireEvent
+        from pipeline.event_config import get_event_config
+
+        event_obj = FireEvent.query.get(event_id)
+        if event_obj is not None:
+            analysis_mode = get_event_config(event_obj).analysis_mode
+
     from agents.chat_agent import run_chat_agent
     return Response(
         stream_with_context(run_chat_agent(summary=summary, road_summary=road_summary,
-                                           message=message, history=history)),
+                                           message=message, history=history,
+                                           analysis_mode=analysis_mode)),
         mimetype="text/plain",
     )
 

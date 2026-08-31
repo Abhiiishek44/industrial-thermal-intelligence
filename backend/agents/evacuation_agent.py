@@ -17,11 +17,31 @@ def run_evacuation_agent(
     fire_context: dict,
     road_summary: list,
     landmarks: list | None = None,
+    *,
+    roads_available: bool = True,
 ) -> dict:
     """Return evacuation analysis dict with top_route and alternative_route.
 
     Returns keys: top_route, alternative_route, road_warnings
     """
+    if not roads_available:
+        return {
+            "data_available": False,
+            "reason": "Road-network analysis is not configured for this region.",
+            "top_route": None,
+            "alternative_route": None,
+            "road_warnings": [],
+        }
+    if not road_summary:
+        return {
+            "data_available": True,
+            "reason": None,
+            "top_route": None,
+            "alternative_route": None,
+            "road_warnings": [],
+            "status_summary": "No affected major-road segments were identified.",
+        }
+
     wind_forecast = fire_context.get("wind_forecast") or []
     parts = [
         "ROAD_STATUS:",
@@ -38,11 +58,16 @@ def run_evacuation_agent(
     try:
         m = re.search(r'\{.*\}', text, re.DOTALL)
         if m:
-            return json.loads(m.group())
+            data = json.loads(m.group())
+            data["data_available"] = True
+            data["reason"] = None
+            return data
     except Exception:
         pass
     # Fallback
     return {
+        "data_available": True,
+        "reason": None,
         "top_route": {"path": [], "status": "", "window": "", "reasoning": text},
         "alternative_route": {"path": [], "status": "", "window": "", "reasoning": ""},
         "road_warnings": [],

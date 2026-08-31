@@ -22,10 +22,25 @@
   let _reportDataCrowd = null;   // crowd-enhanced report cache
   let _viewingCrowd    = false;  // which version is currently displayed
 
+  function _positionChatLauncher() {
+    const launcher = document.getElementById('ai-chat-launcher');
+    const controlStack = document.querySelector('#event-map .leaflet-top.leaflet-right');
+    if (!launcher || !controlStack) return;
+    const bounds = controlStack.getBoundingClientRect();
+    if (!bounds.height || !bounds.width) return;
+    launcher.style.top = Math.ceil(bounds.bottom + 8) + 'px';
+    launcher.style.bottom = 'auto';
+    launcher.style.transform = 'none';
+  }
+
   function _generateInitialQuestions(report) {
     const qs = [];
+    const thermal = report.report_mode === 'thermal_monitoring';
 
-    if (report.risk_level && report.risk_level !== 'Unknown') {
+    if (thermal) {
+      qs.push('What evidence supports the thermal source assessment?');
+      qs.push('What uncertainties require ground verification?');
+    } else if (report.risk_level && report.risk_level !== 'Unknown') {
       qs.push('Why is the risk level classified as ' + report.risk_level + '?');
     }
 
@@ -36,10 +51,10 @@
     }
 
     const evac = report.evacuation || {};
-    if (evac.top_route && evac.top_route.path && evac.top_route.path.length) {
+    if (!thermal && evac.data_available !== false && evac.top_route && evac.top_route.path && evac.top_route.path.length) {
       qs.push('What is the recommended primary evacuation route?');
     }
-    if (evac.alternative_route && evac.alternative_route.window) {
+    if (!thermal && evac.data_available !== false && evac.alternative_route && evac.alternative_route.window) {
       qs.push('How long do we have before evacuation routes are compromised?');
     }
 
@@ -64,6 +79,10 @@
   // ── Public API ───────────────────────────────────────────────────────────────
 
   function init() {
+    document.getElementById('ai-analysis-btn')?.addEventListener('click', _onCardClick);
+    document.getElementById('ai-chat-launcher')?.addEventListener('click', openChat);
+    document.getElementById('ai-chat-drawer-close')?.addEventListener('click', closeChat);
+    document.getElementById('ai-chat-drawer-backdrop')?.addEventListener('click', closeChat);
     document.getElementById('ai-modal-close').addEventListener('click', close);
     document.getElementById('ai-modal-overlay').addEventListener('click', function(e) {
       if (e.target === document.getElementById('ai-modal-overlay')) close();
@@ -71,6 +90,18 @@
     document.getElementById('chat-send-btn').addEventListener('click', _send);
     document.getElementById('chat-input').addEventListener('keydown', function(e) {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); _send(); }
+    });
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        closeChat();
+        close();
+      }
+    });
+    window.addEventListener('resize', _positionChatLauncher);
+    document.addEventListener('click', function(e) {
+      if (e.target.closest('#event-map .leaflet-top.leaflet-right')) {
+        setTimeout(_positionChatLauncher, 0);
+      }
     });
     document.getElementById('ai-enhance-crowd-btn')?.addEventListener('click', function() {
       if (this.disabled) return;
@@ -91,13 +122,13 @@
     });
 
     // Inject limit message element (shown when non-admin hits CHAT_LIMIT)
-    const chatCol = document.getElementById('ai-chat-col');
-    if (chatCol && !document.getElementById('chat-lock-msg')) {
+    const chatDrawer = document.getElementById('ai-chat-drawer');
+    if (chatDrawer && !document.getElementById('chat-lock-msg')) {
       const lock = document.createElement('div');
       lock.id        = 'chat-lock-msg';
       lock.className = 'chat-lock-msg';
       lock.style.display = 'none';
-      chatCol.appendChild(lock);
+      chatDrawer.insertBefore(lock, chatDrawer.querySelector('.chat-input-shell'));
     }
     _applyChatLock();
   }
@@ -179,6 +210,20 @@
     // Update badge whether modal is open or not
     const badge = document.getElementById('ai-modal-badge');
     if (badge) badge.textContent = (eid && tsid) ? 'Event ' + eid + ' · TS ' + tsid : '';
+    const launcher = document.getElementById('ai-chat-launcher');
+    if (launcher) {
+      launcher.classList.toggle('hidden', !(eid && tsid));
+      launcher.setAttribute('aria-expanded', document.getElementById('ai-chat-drawer')?.classList.contains('open') ? 'true' : 'false');
+    }
+    const contextTitle = document.getElementById('ai-chat-context-title');
+    const contextMeta = document.getElementById('ai-chat-context-meta');
+    const breadcrumb = document.getElementById('breadcrumb')?.textContent || '';
+    if (contextTitle) contextTitle.textContent = breadcrumb ? breadcrumb.split(' · ')[0] : 'Current observation';
+    if (contextMeta) contextMeta.textContent = (eid && tsid) ? 'Event ' + eid + ' · Timestep ' + tsid : 'Select a timestep to begin';
+    if (!(eid && tsid)) closeChat();
+    _updateCard();
+    requestAnimationFrame(_positionChatLauncher);
+    setTimeout(_positionChatLauncher, 100);
   }
 
   /** Open the modal. Only opens when a report has already been generated. */
@@ -187,7 +232,33 @@
     document.getElementById('ai-modal-overlay').classList.add('visible');
   }
 
-  // ── AI Analysis card ─────────────────────────────────────────────────────────
+  function openChat() {
+    if (!_eid || !_tsid) return;
+    // On compact layouts the launcher lives inside the controls sheet. Close
+    // that sheet before revealing the assistant so closing chat returns to the
+    // map, not to another overlay.
+    window._mobileClosePanel?.();
+    const drawer = document.getElementById('ai-chat-drawer');
+    const backdrop = document.getElementById('ai-chat-drawer-backdrop');
+    const launcher = document.getElementById('ai-chat-launcher');
+    drawer?.classList.add('open');
+    backdrop?.classList.add('visible');
+    drawer?.setAttribute('aria-hidden', 'false');
+    launcher?.setAttribute('aria-expanded', 'true');
+    setTimeout(function() { document.getElementById('chat-input')?.focus(); }, 180);
+  }
+
+  function closeChat() {
+    const drawer = document.getElementById('ai-chat-drawer');
+    const backdrop = document.getElementById('ai-chat-drawer-backdrop');
+    const launcher = document.getElementById('ai-chat-launcher');
+    drawer?.classList.remove('open');
+    backdrop?.classList.remove('visible');
+    drawer?.setAttribute('aria-hidden', 'true');
+    launcher?.setAttribute('aria-expanded', 'false');
+  }
+
+  // ── AI Analysis top action ───────────────────────────────────────────────────
 
   /**
    * Try to load cached reports from server (standard + crowd if available).
@@ -220,48 +291,39 @@
     }
   }
 
-  /** Append AI Analysis card to #dashboard-content (call after renderDashboard). */
+  /** Refresh the top action and load any cached report for the selected timestep. */
   function renderCard() {
-    const content = document.getElementById('dashboard-content');
-    if (!content || !_eid || !_tsid) return;
     const existing = document.getElementById('dash-ai-card');
     if (existing) existing.remove();
-
-    const card = document.createElement('div');
-    card.className = 'dash-card dash-card-ai';
-    card.id = 'dash-ai-card';
-    card.innerHTML =
-      '<div class="dash-card-title">AI Analysis</div>' +
-      '<div class="ai-card-body" id="ai-card-body"></div>';
-    content.appendChild(card);
     _updateCard();
-    // Main card click (not on the crowd button)
-    card.addEventListener('click', function(e) {
-      if (e.target.closest('#ai-crowd-btn')) return;
-      _onCardClick();
-    });
+    if (!_eid || !_tsid) return;
     // Auto-load from cache (all users — 403 silently ignored for non-admins)
     _tryLoadCached();
   }
 
   function _updateCard() {
-    const body = document.getElementById('ai-card-body');
-    if (!body) return;
+    const button = document.getElementById('ai-analysis-btn');
+    if (!button) return;
+    const available = !!(_eid && _tsid);
+    button.classList.toggle('hidden', !available);
+    button.dataset.state = _cardState;
+    button.disabled = !available || _cardState === 'loading' || _cardState === 'crowd-loading';
+    const label = button.querySelector('.ai-trigger-label');
+    if (!label) return;
     if (_cardState === 'idle') {
-      body.className = 'ai-card-body idle';
-      body.innerHTML = '<div class="ai-card-prompt">Generate AI report</div>';
+      label.textContent = 'Create report';
+      button.title = 'Generate situational awareness report';
     } else if (_cardState === 'loading') {
-      body.className = 'ai-card-body loading';
-      body.innerHTML = '<div class="spinner-sm"></div><div class="ai-card-status">Generating…</div>';
+      label.textContent = 'Generating…';
+      button.title = 'Generating situational awareness report';
     } else if (_cardState === 'done') {
-      body.className = 'ai-card-body done';
-      body.innerHTML =
-        '<div class="ai-card-ready">Report ready</div>' +
-        '<div class="ai-card-view">Click to view →</div>';
+      label.textContent = 'View report';
+      button.title = 'Open situational awareness report';
     } else if (_cardState === 'crowd-loading') {
-      body.className = 'ai-card-body loading';
-      body.innerHTML = '<div class="spinner-sm"></div><div class="ai-card-status">Updating with crowd data…</div>';
+      label.textContent = 'Updating…';
+      button.title = 'Updating report with crowd data';
     }
+    button.setAttribute('aria-label', button.title);
   }
 
   function _onCardClick() {
@@ -347,7 +409,7 @@
     const toast = document.createElement('div');
     toast.className = 'ai-toast';
     toast.id = 'ai-toast';
-    toast.innerHTML = '<span class="ai-toast-msg">AI Analysis ready</span><span class="ai-toast-action">View →</span>';
+    toast.innerHTML = '<span class="ai-toast-msg">Report ready</span><span class="ai-toast-action">View →</span>';
     toast.addEventListener('click', function() {
       open();
       toast.remove();
@@ -385,26 +447,40 @@
   }
 
   function _renderReport(report) {
+    const thermal = report.report_mode === 'thermal_monitoring';
     const tabs = [
-      { id: 'overview',   label: 'Overview' },
-      { id: 'risk',       label: 'Risk' },
-      { id: 'impact',     label: 'Impact' },
-      { id: 'evacuation', label: 'Evacuation' },
+      { id: 'overview', label: 'Overview', hint: 'Decision brief' },
+      { id: 'risk', label: thermal ? 'Thermal analysis' : 'Risk analysis', hint: thermal ? 'Source intelligence' : 'Fire behaviour' },
     ];
-    if (report.crowd) {
-      tabs.push({ id: 'crowd', label: 'Crowd' });
+    if (!thermal) {
+      tabs.push({ id: 'impact', label: 'Impact', hint: 'People & places' });
+    }
+    if (!thermal && (!report.evacuation || report.evacuation.data_available !== false)) {
+      tabs.push({ id: 'evacuation', label: 'Evacuation', hint: 'Routes & access' });
+    }
+    if (!thermal && report.crowd) {
+      tabs.push({ id: 'crowd', label: 'Field reports', hint: 'Community signals' });
     }
 
     const tabsEl   = document.getElementById('ai-report-tabs');
     const panelsEl = document.getElementById('ai-report-panels');
+    const metadata = report.metadata || {};
+    const region = metadata.region || {};
+    const badge = document.getElementById('ai-modal-badge');
+    if (badge) badge.textContent = thermal ? 'Thermal monitoring' : 'Wildfire response';
+    const chatTitle = document.getElementById('ai-chat-context-title');
+    if (chatTitle && region.name) chatTitle.textContent = region.name;
 
     tabsEl.innerHTML = tabs.map(function(t, i) {
-      return '<button class="report-tab' + (i === 0 ? ' active' : '') + '" data-tab="' + t.id + '">' + t.label + '</button>';
+      return '<button class="report-tab' + (i === 0 ? ' active' : '') + '" data-tab="' + t.id + '" aria-selected="' + (i === 0 ? 'true' : 'false') + '">' +
+        '<span class="report-tab-icon" aria-hidden="true">' + _tabIcon(t.id) + '</span>' +
+        '<span class="report-tab-copy"><strong>' + _escHtml(t.label) + '</strong><small>' + _escHtml(t.hint) + '</small></span>' +
+        '<span class="report-tab-arrow" aria-hidden="true">›</span></button>';
     }).join('');
 
     const renderers = {
       overview:   function() { return _renderOverviewPanel(report); },
-      risk:       function() { return _renderRiskPanel(report.risk); },
+      risk:       function() { return thermal ? _renderThermalPanel(report.risk) : _renderRiskPanel(report.risk); },
       impact:     function() { return _renderImpactPanel(report.impact); },
       evacuation: function() { return _renderEvacPanel(report.evacuation); },
       crowd:      function() { return _renderCrowdPanel(report.crowd); },
@@ -417,10 +493,14 @@
 
     tabsEl.querySelectorAll('.report-tab').forEach(function(btn) {
       btn.addEventListener('click', function() {
-        tabsEl.querySelectorAll('.report-tab').forEach(function(b) { b.classList.remove('active'); });
+        tabsEl.querySelectorAll('.report-tab').forEach(function(b) { b.classList.remove('active'); b.setAttribute('aria-selected', 'false'); });
         panelsEl.querySelectorAll('.report-panel').forEach(function(p) { p.classList.remove('active'); });
         btn.classList.add('active');
+        btn.setAttribute('aria-selected', 'true');
         document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
+        panelsEl.scrollTop = 0;
+        const modalBody = document.querySelector('.ai-modal-body');
+        if (modalBody) modalBody.scrollTop = 0;
       });
     });
 
@@ -429,8 +509,48 @@
 
   // ── Structured panel renderers ───────────────────────────────────────────────
 
-  function _card(title, bodyHtml) {
-    return '<div class="rpt-json-card"><div class="rpt-json-card-title">' + _escHtml(title) + '</div>' +
+  function _tabIcon(id) {
+    const icons = {
+      overview: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>',
+      risk: '<svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 7v5l3 2"/><path d="M16 3h5v5"/></svg>',
+      impact: '<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3.5 19c.6-4 2.4-6 5.5-6s4.9 2 5.5 6"/><path d="M15 6.5a3 3 0 0 1 0 5.8M16 14c2.5.5 4 2.1 4.5 5"/></svg>',
+      evacuation: '<svg viewBox="0 0 24 24"><path d="M4 19V5l7 3 9-3v14l-9 3-7-3Z"/><path d="M11 8v14M15 7l2 2-2 2"/></svg>',
+      crowd: '<svg viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4V5Z"/><path d="M8 9h8M8 12h5"/></svg>',
+    };
+    return icons[id] || icons.overview;
+  }
+
+  function _metricIcon(id) {
+    const icons = {
+      users: '<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3.5 19c.6-4 2.4-6 5.5-6s4.9 2 5.5 6M15 6.5a3 3 0 0 1 0 5.8M16 14c2.5.5 4 2.1 4.5 5"/></svg>',
+      unavailable: '<svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3 1 0 2-.1 2.8-.3M5 12v5c0 1.7 3.1 3 7 3M17 16l4 4m0-4-4 4"/></svg>',
+      fire: '<svg viewBox="0 0 24 24"><path d="M13.5 3s.7 3.1-1.5 4.8C9.9 9.4 9.2 11 10 13c-2-1-3-3-2-5-3 2.4-4 5-3 8a7.2 7.2 0 0 0 14 0c1-4-1.3-9-5.5-13Z"/></svg>',
+      route: '<svg viewBox="0 0 24 24"><path d="M5 19c0-7 14-3 14-10"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="7" r="2"/></svg>',
+      reports: '<svg viewBox="0 0 24 24"><path d="M4 5h16v12H8l-4 4V5Z"/><path d="M8 9h8M8 13h5"/></svg>',
+    };
+    return icons[id] || icons.fire;
+  }
+
+  function _panelHead(eyebrow, title, description, status) {
+    return '<header class="panel-page-head"><div><span>' + _escHtml(eyebrow) + '</span><h3>' + _escHtml(title) + '</h3>' +
+      (description ? '<p>' + _escHtml(description) + '</p>' : '') + '</div>' +
+      (status ? '<span class="panel-status"><i></i>' + _escHtml(status) + '</span>' : '') + '</header>';
+  }
+
+  function _sectionTitle(title, description) {
+    return '<div class="report-section-heading"><div><h4>' + _escHtml(title) + '</h4>' +
+      (description ? '<p>' + _escHtml(description) + '</p>' : '') + '</div></div>';
+  }
+
+  function _emptyState(title, description, reason) {
+    return '<div class="report-empty-state"><div class="report-empty-icon">' +
+      '<svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 11v6c0 1.7 3.1 3 7 3 1.2 0 2.4-.1 3.3-.4"/><path d="m17 16 4 4m0-4-4 4"/></svg></div>' +
+      '<div class="report-empty-copy"><span>Data connection required</span><h4>' + _escHtml(title) + '</h4><p>' + _escHtml(description) + '</p></div>' +
+      '<div class="report-empty-note"><strong>Why this is unavailable</strong><p>' + _escHtml(reason) + '</p></div></div>';
+  }
+
+  function _card(title, bodyHtml, extraClass) {
+    return '<div class="rpt-json-card ' + (extraClass || '') + '"><div class="rpt-json-card-title">' + _escHtml(title) + '</div>' +
            '<div class="rpt-json-card-body">' + bodyHtml + '</div></div>';
   }
 
@@ -440,32 +560,85 @@
            '<span class="rpt-val">' + _escHtml(String(value)) + '</span></div>';
   }
 
-  function _tagList(items) {
+  function _tagList(items, tone) {
     if (!items || !items.length) return '';
-    return '<div class="rpt-tag-list">' +
-      items.map(function(s) { return '<span class="rpt-tag">' + _escHtml(s) + '</span>'; }).join('') +
+    return '<div class="rpt-list ' + (tone || '') + '">' +
+      items.map(function(s) { return '<div class="rpt-list-item"><span class="rpt-list-icon">' + (tone === 'action' ? '✓' : tone === 'warning' ? '!' : '•') + '</span><span>' + _escHtml(s) + '</span></div>'; }).join('') +
       '</div>';
+  }
+
+  function _compactText(value, maxLength) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    const limit = maxLength || 190;
+    if (text.length <= limit) return text;
+    const sentence = text.slice(0, limit + 1).match(/^(.{60,}?[.!?])(?:\s|$)/);
+    if (sentence) return sentence[1];
+    const clipped = text.slice(0, limit);
+    const boundary = clipped.lastIndexOf(' ');
+    return clipped.slice(0, boundary > 110 ? boundary : limit).replace(/[,:;\s]+$/, '') + '…';
+  }
+
+  function _briefCard(title, value, tone) {
+    if (!value) return '';
+    const full = String(value).replace(/\s+/g, ' ').trim();
+    const summary = _compactText(full);
+    const details = summary !== full
+      ? '<details class="brief-details"><summary>View complete analysis</summary><p>' + _escHtml(full) + '</p></details>'
+      : '';
+    const marks = { signal: '◉', danger: '!', warning: '?', weather: '↗', action: '✓' };
+    return '<article class="brief-card ' + (tone || '') + '">' +
+      '<div class="brief-card-head"><span class="brief-card-icon">' + (marks[tone] || '•') + '</span><div class="brief-card-title">' + _escHtml(title) + '</div></div>' +
+      '<p class="brief-card-summary">' + _escHtml(summary) + '</p>' + details + '</article>';
   }
 
   function _renderRiskPanel(risk) {
     if (!risk) return '<div class="report-na">Not available</div>';
     let html = '';
     if (risk.overall_assessment) {
-      html += _card('Overall Assessment', '<p class="rpt-p">' + _escHtml(risk.overall_assessment) + '</p>');
+      html += _briefCard('Overall assessment', risk.overall_assessment, 'signal');
     }
     if (risk.fire_behaviour) {
-      html += _card('Fire Behaviour', '<p class="rpt-p">' + _escHtml(risk.fire_behaviour) + '</p>');
+      html += _briefCard('Fire behaviour', risk.fire_behaviour, 'danger');
     }
     if (risk.growth_trajectory) {
-      html += _card('Growth Trajectory', '<p class="rpt-p">' + _escHtml(risk.growth_trajectory) + '</p>');
+      html += _briefCard('Growth trajectory', risk.growth_trajectory, 'warning');
     }
     if (risk.weather_drivers) {
-      html += _card('Weather Drivers', '<p class="rpt-p">' + _escHtml(risk.weather_drivers) + '</p>');
+      html += _briefCard('Weather drivers', risk.weather_drivers, 'weather');
     }
     if (risk.risk_factors && risk.risk_factors.length) {
-      html += _card('Risk Factors', _tagList(risk.risk_factors));
+      html += _card('Risk factors', _tagList(risk.risk_factors, 'warning'), 'span-full');
     }
-    return html || '<div class="report-na">Not available</div>';
+    return _panelHead('Operational intelligence', 'Wildfire risk analysis', 'Current behaviour, growth potential, and the conditions influencing spread.', 'Model assessed') +
+      (html ? '<div class="report-card-grid">' + html + '</div>' : '<div class="report-na">Not available</div>');
+  }
+
+  function _renderThermalPanel(analysis) {
+    if (!analysis) return '<div class="report-na">Not available</div>';
+    let summary = '';
+    let details = '';
+    if (analysis.detection_summary) {
+      summary += _briefCard('Observed activity', analysis.detection_summary, 'signal');
+    }
+    if (analysis.source_assessment) {
+      summary += _briefCard('Likely source', analysis.source_assessment, 'warning');
+    }
+    if (analysis.persistence_assessment) {
+      summary += _briefCard('Persistence', analysis.persistence_assessment, 'weather');
+    }
+    if (analysis.context_factors && analysis.context_factors.length) {
+      details += _card('Supporting evidence', _tagList(analysis.context_factors, 'evidence'));
+    }
+    if (analysis.uncertainties && analysis.uncertainties.length) {
+      details += _card('Known uncertainties', _tagList(analysis.uncertainties, 'warning'));
+    }
+    if (analysis.recommended_checks && analysis.recommended_checks.length) {
+      details += _card('Recommended verification', _tagList(analysis.recommended_checks, 'action'), 'span-full');
+    }
+    const body = (summary ? '<div class="analysis-summary-grid">' + summary + '</div>' : '') +
+      (details ? _sectionTitle('Evidence & verification', 'What supports the assessment, what remains unknown, and what to check next.') + '<div class="analysis-detail-grid">' + details + '</div>' : '');
+    return _panelHead('Satellite intelligence', 'Thermal source analysis', 'A structured assessment of observed heat signatures—not a validated wildfire-spread forecast.', 'Satellite observed') +
+      (body || '<div class="report-na">Not available</div>');
   }
 
   function _renderImpactPanel(impact) {
@@ -474,13 +647,26 @@
 
     // Population counts
     const pop = impact.population || {};
-    if (Object.keys(pop).length) {
+    if (pop.data_available === false) {
+      return _panelHead('Exposure intelligence', 'Population & community exposure', 'Estimated population and community context around the observed thermal activity.', 'Awaiting data') +
+        _emptyState(
+          'Population exposure is not available yet',
+          'The report is withholding numeric estimates instead of showing misleading zeros. Connect a population raster to calculate proximity exposure for this region.',
+          pop.reason || 'No population source is configured for this region.'
+        );
+    } else if (Object.keys(pop).length) {
       let popHtml = '';
-      if (pop.within_perimeter != null) popHtml += _kv('Within perimeter', pop.within_perimeter.toLocaleString());
-      if (pop.at_risk_3h  != null) popHtml += _kv('At risk +3h',  pop.at_risk_3h.toLocaleString());
-      if (pop.at_risk_6h  != null) popHtml += _kv('At risk +6h',  pop.at_risk_6h.toLocaleString());
-      if (pop.at_risk_12h != null) popHtml += _kv('At risk +12h', pop.at_risk_12h.toLocaleString());
-      if (popHtml) html += _card('Population Exposure', popHtml);
+      if (pop.exposure_mode === 'proximity_buffers') {
+        if (pop.within_1km != null) popHtml += '<div class="exposure-metric"><strong>' + pop.within_1km.toLocaleString() + '</strong><span>Within 1 km</span></div>';
+        if (pop.within_3km != null) popHtml += '<div class="exposure-metric"><strong>' + pop.within_3km.toLocaleString() + '</strong><span>Within 3 km</span></div>';
+        if (pop.within_5km != null) popHtml += '<div class="exposure-metric"><strong>' + pop.within_5km.toLocaleString() + '</strong><span>Within 5 km</span></div>';
+      } else {
+        if (pop.affected_population != null) popHtml += '<div class="exposure-metric"><strong>' + pop.affected_population.toLocaleString() + '</strong><span>Within perimeter</span></div>';
+        if (pop.at_risk_3h  != null) popHtml += '<div class="exposure-metric"><strong>' + pop.at_risk_3h.toLocaleString() + '</strong><span>At risk +3h</span></div>';
+        if (pop.at_risk_6h  != null) popHtml += '<div class="exposure-metric"><strong>' + pop.at_risk_6h.toLocaleString() + '</strong><span>At risk +6h</span></div>';
+        if (pop.at_risk_12h != null) popHtml += '<div class="exposure-metric"><strong>' + pop.at_risk_12h.toLocaleString() + '</strong><span>At risk +12h</span></div>';
+      }
+      if (popHtml) html += _card('Population exposure', '<div class="exposure-metric-grid">' + popHtml + '</div>', 'span-full');
     }
 
     // Communities
@@ -496,18 +682,23 @@
     }
 
     if (impact.impact_summary) {
-      html += _card('Impact Summary', '<p class="rpt-p">' + _escHtml(impact.impact_summary) + '</p>');
+      html += _briefCard('Impact summary', impact.impact_summary, 'signal');
     }
 
     if (impact.worsening_factors && impact.worsening_factors.length) {
-      html += _card('Worsening Factors', _tagList(impact.worsening_factors));
+      html += _card('Worsening factors', _tagList(impact.worsening_factors, 'warning'));
     }
 
-    return html || '<div class="report-na">Not available</div>';
+    return _panelHead('Exposure intelligence', 'Population & community exposure', 'Estimated population and community context around the current incident footprint.', 'Data available') +
+      (html ? '<div class="report-card-grid">' + html + '</div>' : '<div class="report-na">Not available</div>');
   }
 
   function _renderEvacPanel(evac) {
     if (!evac) return '<div class="report-na">Not available</div>';
+    if (evac.data_available === false) {
+      return _panelHead('Mobility intelligence', 'Evacuation routes', 'Route availability and access windows for exposed communities.', 'Awaiting data') +
+        _emptyState('Road-network analysis is unavailable', 'Routes are intentionally omitted until a valid road-network source is connected.', evac.reason || 'No road-network source is configured.');
+    }
     let html = '';
 
     function _routeCard(title, route) {
@@ -528,10 +719,11 @@
     html += _routeCard('Alternative Route', evac.alternative_route);
 
     if (evac.road_warnings && evac.road_warnings.length) {
-      html += _card('Road Warnings', _tagList(evac.road_warnings));
+      html += _card('Road warnings', _tagList(evac.road_warnings, 'warning'), 'span-full');
     }
 
-    return html || '<div class="report-na">Not available</div>';
+    return _panelHead('Mobility intelligence', 'Evacuation routes', 'Route availability, access windows, and current road constraints.', 'Routes assessed') +
+      (html ? '<div class="report-card-grid">' + html + '</div>' : '<div class="report-na">Not available</div>');
   }
 
   function _renderCrowdPanel(crowd) {
@@ -559,47 +751,64 @@
     }
 
     if (crowd.fire_observations && !/No crowd reports/i.test(crowd.fire_observations)) {
-      html += _card('Fire Observations', '<p class="rpt-p">' + _escHtml(crowd.fire_observations) + '</p>');
+      html += _briefCard('Fire observations', crowd.fire_observations, 'danger');
     }
 
     if (crowd.situational_info) {
-      html += _card('Situational Information', '<p class="rpt-p">' + _escHtml(crowd.situational_info) + '</p>');
+      html += _briefCard('Situational information', crowd.situational_info, 'signal');
     }
 
     if (crowd.notable_patterns) {
-      html += _card('Notable Patterns', '<p class="rpt-p">' + _escHtml(crowd.notable_patterns) + '</p>');
+      html += _briefCard('Notable patterns', crowd.notable_patterns, 'weather');
     }
 
     if (!html) {
       html = '<div class="report-na">No crowd reports available for this timestep.</div>';
     }
 
-    return html;
+    return _panelHead('Community intelligence', 'Field reports', 'Public observations and requests that can supplement modelled conditions.', counts.total ? counts.total + ' reports' : 'No reports') +
+      '<div class="report-card-grid">' + html + '</div>';
   }
 
   function _renderOverviewPanel(report) {
     let html = '';
+    const metadata = report.metadata || {};
+    const region = metadata.region || {};
+    const thermal = report.report_mode === 'thermal_monitoring';
+    let status = '';
 
-    // Risk level badge
-    if (report.risk_level && report.risk_level !== 'Unknown') {
+    if (report.assessment_level) {
+      status = '<span class="risk-badge moderate">' + _escHtml(report.assessment_level) + '</span>';
+    } else if (report.risk_level && report.risk_level !== 'Unknown') {
       const lvlMap = { critical: 'critical', high: 'high', moderate: 'moderate', low: 'low' };
       const cls = lvlMap[report.risk_level.toLowerCase()] || 'high';
-      html += '<div class="risk-badge ' + cls + '">' +
+      status = '<span class="risk-badge ' + cls + '">' +
         '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0">' +
         '<path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>' +
         _escHtml(report.risk_level) + ' Risk' +
-        '</div>';
+        '</span>';
     }
 
-    // Key points
+    const commandMeta = [];
+    if (metadata.observation_time) commandMeta.push('Observed ' + metadata.observation_time);
+    if (metadata.provider) commandMeta.push('AI narrative · ' + metadata.provider);
+    html += '<section class="report-command-head"><div class="report-command-icon">' +
+      '<svg viewBox="0 0 24 24"><path d="M4 13h3l2-6 4 11 2-5h5"/></svg></div>' +
+      '<div class="report-command-copy"><span class="report-command-kicker">' +
+      (thermal ? 'Thermal monitoring' : 'Wildfire operations') + '</span>' +
+      '<h2>' + _escHtml(region.name || 'Current operational picture') + '</h2>' +
+      (commandMeta.length ? '<div class="report-command-meta">' + commandMeta.map(function(item) {
+        return '<span>' + _escHtml(item) + '</span>';
+      }).join('') + '</div>' : '') + '</div>' + status + '</section>';
+
     if (report.key_points && report.key_points.length) {
       html += '<div class="report-key-points">' +
-        '<div class="kp-title">Key Points</div>' +
-        '<ul class="kp-list">' +
-        report.key_points.map(function(p) {
-          return '<li>' + _escHtml(p) + '</li>';
+        '<div class="kp-title"><div><h4>Priority signals</h4><p>The most decision-relevant findings in this observation.</p></div><span>' + report.key_points.slice(0, 4).length + ' signals</span></div>' +
+        '<div class="kp-grid">' +
+        report.key_points.slice(0, 4).map(function(p, index) {
+          return '<article class="kp-item"><span>0' + (index + 1) + '</span><p>' + _escHtml(_compactText(p, 145)) + '</p></article>';
         }).join('') +
-        '</ul></div>';
+        '</div></div>';
     }
 
     // Stat tiles — pulled from structured specialist data
@@ -607,19 +816,29 @@
 
     const impact = report.impact || {};
     const pop = impact.population || {};
-    const atRisk12 = pop.at_risk_12h;
-    if (atRisk12 != null) {
-      tiles.push({ icon: '👥', label: 'At risk +12h', value: Number(atRisk12).toLocaleString() });
-    }
-    if (pop.within_perimeter != null) {
-      tiles.push({ icon: '🔥', label: 'Within perimeter', value: Number(pop.within_perimeter).toLocaleString() });
+    if (!thermal) {
+      if (pop.data_available === false) {
+        tiles.push({ icon: 'unavailable', label: 'Population data', value: 'Not connected' });
+      } else {
+        if (pop.exposure_mode === 'proximity_buffers' && pop.within_5km != null) {
+          tiles.push({ icon: 'users', label: 'Within 5 km', value: Number(pop.within_5km).toLocaleString() });
+        } else {
+          const atRisk12 = pop.at_risk_12h;
+          if (atRisk12 != null) {
+            tiles.push({ icon: 'users', label: 'At risk +12h', value: Number(atRisk12).toLocaleString() });
+          }
+          if (pop.affected_population != null) {
+            tiles.push({ icon: 'fire', label: 'Within perimeter', value: Number(pop.affected_population).toLocaleString() });
+          }
+        }
+      }
     }
 
     const evac = report.evacuation || {};
     if (evac.top_route && evac.top_route.window) {
-      tiles.push({ icon: '🛣', label: 'Top route window', value: evac.top_route.window });
+      tiles.push({ icon: 'route', label: 'Top route window', value: evac.top_route.window });
     } else if (evac.top_route && evac.top_route.path && evac.top_route.path.length) {
-      tiles.push({ icon: '🛣', label: 'Top route', value: evac.top_route.path[0] + ' → ' + evac.top_route.path[evac.top_route.path.length - 1] });
+      tiles.push({ icon: 'route', label: 'Top route', value: evac.top_route.path[0] + ' → ' + evac.top_route.path[evac.top_route.path.length - 1] });
     }
 
     const crowd = report.crowd;
@@ -627,14 +846,14 @@
       const total = crowd.report_counts.total || 0;
       const urgent = crowd.report_counts.need_help || 0;
       const label = urgent ? total + ' reports (' + urgent + ' urgent)' : total + ' reports';
-      tiles.push({ icon: '📍', label: 'Crowd reports', value: label });
+      tiles.push({ icon: 'reports', label: 'Crowd reports', value: label });
     }
 
     if (tiles.length) {
       html += '<div class="ov-stat-row">' +
         tiles.map(function(t) {
           return '<div class="ov-stat-tile">' +
-            '<span class="ov-stat-icon">' + t.icon + '</span>' +
+            '<span class="ov-stat-icon">' + _metricIcon(t.icon) + '</span>' +
             '<span class="ov-stat-val">' + _escHtml(t.value) + '</span>' +
             '<span class="ov-stat-label">' + _escHtml(t.label) + '</span>' +
             '</div>';
@@ -642,22 +861,38 @@
         '</div>';
     }
 
-    // Briefing sections
     const hasBriefing = report.situation || report.key_risks || report.immediate_actions;
     if (hasBriefing) {
-      html += '<div class="report-briefing-label"><span class="briefing-line"></span><span class="briefing-title">Briefing</span><span class="briefing-line"></span></div>';
-      // If only situation is filled (LLM returned full text in one field), label it generically
+      html += _sectionTitle('Decision briefing', 'A concise operational interpretation with recommended next steps.');
       const threeFields = report.key_risks || report.immediate_actions;
+      html += '<div class="brief-grid">';
       if (report.situation) {
-        html += _card(threeFields ? 'Situation' : 'Executive Briefing',
-          '<p class="rpt-p">' + _escHtml(report.situation) + '</p>');
+        html += _briefCard(threeFields ? 'Situation now' : 'Executive briefing', report.situation, 'signal');
       }
       if (report.key_risks) {
-        html += _card('Key Risks', '<p class="rpt-p">' + _escHtml(report.key_risks) + '</p>');
+        html += _briefCard('Key risks', report.key_risks, 'danger');
       }
       if (report.immediate_actions) {
-        html += _card('Immediate Actions', '<p class="rpt-p">' + _escHtml(report.immediate_actions) + '</p>');
+        html += _briefCard('Immediate actions', report.immediate_actions, 'action');
       }
+      html += '</div>';
+    }
+
+    let provenance = '';
+    if (region.name) provenance += _kv('Region', region.name);
+    if (metadata.observation_time) provenance += _kv('Observation', metadata.observation_time);
+    if (metadata.provider && metadata.model) provenance += _kv('Narrative model', metadata.provider + ' · ' + metadata.model);
+    if (metadata.generated_at) provenance += _kv('Generated', metadata.generated_at);
+    const sources = metadata.data_sources || {};
+    const sourceNames = Object.keys(sources).filter(function(key) { return sources[key]; }).map(function(key) {
+      const value = sources[key];
+      const label = key.replaceAll('_', ' ');
+      if (typeof value === 'object') return label + ': ' + (value.provider || 'configured source');
+      return label + ': ' + value;
+    });
+    if (sourceNames.length) provenance += _kv('Evidence sources', sourceNames.join(' · '));
+    if (provenance) {
+      html += '<details class="report-provenance"><summary>Data sources & report details</summary><div>' + provenance + '</div></details>';
     }
 
     return html || '<div class="report-na">Not available</div>';
@@ -667,7 +902,8 @@
 
   function _clearChat() {
     const msgs = document.getElementById('chat-messages');
-    if (msgs) msgs.innerHTML = '<div class="chat-welcome">Ask anything about this fire event and the AI analysis above.</div>';
+    if (msgs) msgs.innerHTML = '<div class="chat-welcome"><span class="chat-welcome-mark assistant-star" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2.8c.6 5.8 3.4 8.6 9.2 9.2-5.8.6-8.6 3.4-9.2 9.2-.6-5.8-3.4-8.6-9.2-9.2 5.8-.6 8.6-3.4 9.2-9.2Z"/></svg></span>' +
+      '<strong>How can I help?</strong><p>Ask about the current observation, evidence, exposure, or recommended actions.</p></div>';
   }
 
   function _renderInitialSuggestions() {
@@ -835,5 +1071,5 @@
     );
   }
 
-  window.AIModal = { init, setContext, setAdmin, setCrowdAvailable, open, close, renderCard };
+  window.AIModal = { init, setContext, setAdmin, setCrowdAvailable, open, close, openChat, closeChat, renderCard };
 })();
