@@ -33,17 +33,17 @@
   };
 
   const POST_LABELS = {
-    fire_report:  '🔥 Fire Report',
-    info:         'ℹ️ Info',
-    request_help: '🆘 Need Help',
-    offer_help:   '🤝 Offer Help',
+    fire_report:  'Fire Report',
+    info:         'Info',
+    request_help: 'Need Help',
+    offer_help:   'Offer Help',
   };
 
   const POST_ICONS = {
-    fire_report:  '🔥',
-    info:         'ℹ️',
-    request_help: '🆘',
-    offer_help:   '🤝',
+    fire_report:  'FR',
+    info:         'i',
+    request_help: '?',
+    offer_help:   '+',
   };
 
   // Type → dot fill colour
@@ -72,13 +72,13 @@
   }
 
   function _makeFullIcon(report) {
-    var emoji  = POST_ICONS[report.post_type] || '📍';
+    var markerLabel = POST_ICONS[report.post_type] || 'i';
     var border = '#e53935';
     return L.divIcon({
-      html: '<div style="font-size:18px;line-height:28px;text-align:center;' +
+      html: '<div style="font-size:10px;font-weight:800;line-height:28px;text-align:center;color:#fff;' +
             'width:28px;height:28px;border-radius:50%;' +
             'background:rgba(0,0,0,.65);border:2px solid ' + border + ';' +
-            'box-shadow:0 2px 6px rgba(0,0,0,.7)">' + emoji + '</div>',
+            'box-shadow:0 2px 6px rgba(0,0,0,.7)">' + markerLabel + '</div>',
       className: '',
       iconSize:   [28, 28],
       iconAnchor: [14, 14],
@@ -208,7 +208,7 @@
   function _openModal(report) {
     _modalReport = report;
     var modal = document.getElementById('cr-modal');
-    var icon  = POST_ICONS[report.post_type] || '📍';
+    var icon  = POST_ICONS[report.post_type] || 'i';
     document.getElementById('cr-modal-icon').textContent  = icon;
     document.getElementById('cr-modal-type').textContent  =
       (report.post_type || '').replace(/_/g, ' ');
@@ -435,7 +435,7 @@
       if (!reports.length) { el.innerHTML = '<div class="crowd-empty">No reports yet</div>'; return; }
 
       el.innerHTML = reports.map(function(r) {
-        var icon = POST_ICONS[r.post_type] || '📍';
+        var icon = POST_ICONS[r.post_type] || 'i';
         return '<div class="crowd-report-item" data-report-id="' + r.id + '">' +
           '<div class="crowd-report-header">' +
             '<span class="crowd-report-icon">' + icon + '</span>' +

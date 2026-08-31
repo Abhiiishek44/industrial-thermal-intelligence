@@ -299,21 +299,6 @@
       this._windFieldHours = [];
       this._windFieldGroup = L.layerGroup().addTo(this.map);
 
-      // MODIS Terra true-color daily mosaic (NASA GIBS), 250 m/px.
-      // Pinned to sentinelPane (z=250) so it sits above the basemap but below
-      // vector overlays. Daily coverage with no gaps — great for replay since
-      // smoke plumes are visible across the AOI on every slot date.
-      // (Sentinel-2 isn't available as a GIBS tile layer; for higher detail
-      // switch the basemap to "Satellite" — Esri imagery, not date-aware.)
-      this._satelliteTile = L.tileLayer('', {
-        attribution: 'Imagery © NASA EOSDIS GIBS',
-        maxNativeZoom: 9,
-        maxZoom: 18,
-        opacity: 0.9,
-        pane: 'sentinelPane',
-      });
-      this._satelliteTile.addTo(this.map);
-
       // Basemap selector (radio buttons)
       this._basemapControl = L.control.layers(this._baseTiles, {}, {
         position: 'topright', collapsed: true,
@@ -330,7 +315,6 @@
 
       // Overlay layers (checkboxes)
       this._overlayControl = L.control.layers({}, {
-        'MODIS Terra (250 m)': this._satelliteTile,
         'Perimeter':           this._layers.perimeter,
         'Roads':               this._layers.roads,
         'Hotspots':            this._layers.hotspots,
@@ -354,15 +338,6 @@
 
     setMonitoringFocus(focus) {
       this._monitoringFocus = focus === 'forest' ? 'forest' : 'industrial';
-    }
-
-    setSatelliteDate(dateStr) {
-      if (!dateStr) return;
-      const url = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/' +
-        'MODIS_Terra_CorrectedReflectance_TrueColor/default/' + dateStr +
-        '/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg';
-      this._satelliteTile.setUrl(url);
-      if (this.map.hasLayer(this._satelliteTile)) this._satelliteTile.redraw();
     }
 
     fitToBbox(bbox) {

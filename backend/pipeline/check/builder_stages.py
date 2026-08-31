@@ -155,6 +155,19 @@ def _run_thermal_monitoring_stage(event, ts, study) -> None:
         from pipeline.event_config import get_event_config
 
         config = get_event_config(event)
+        thermal_dir = Path(study.data_processed_dir) / "thermal"
+        persistence_metadata = {}
+        classification_metadata = {}
+        for filename, target in (
+            ("persistence_metadata.json", persistence_metadata),
+            ("classification_metadata.json", classification_metadata),
+        ):
+            metadata_path = thermal_dir / filename
+            if metadata_path.exists():
+                try:
+                    target.update(json.loads(metadata_path.read_text(encoding="utf-8")))
+                except (OSError, json.JSONDecodeError):
+                    log.warning("[thermal] unable to read %s", metadata_path)
         context = {
             "analysis_mode": "thermal_monitoring",
             "region": {
@@ -187,6 +200,11 @@ def _run_thermal_monitoring_stage(event, ts, study) -> None:
                 "near_industrial_facility_count": count_true("near_industrial_facility"),
                 "confidence_counts": value_counts("confidence"),
                 "landcover_group_counts": value_counts("landcover_group"),
+                "classification_counts": classification_metadata.get("class_counts", {}),
+                "emergency_candidate_count": classification_metadata.get("emergency_candidate_count", 0),
+                "classification_mean_confidence": classification_metadata.get("mean_confidence"),
+                "persistence_level_counts": persistence_metadata.get("persistence_level_counts", {}),
+                "persistent_source_count": persistence_metadata.get("persistent_source_count", 0),
                 "satellites": sorted(str(value) for value in observations.get(
                     "satellite", pd.Series(dtype="string"),
                 ).dropna().unique()),

@@ -6,7 +6,8 @@
 (function() {
   let homeMap  = null;
   let eventMap = null;
-  let darkMode = true;
+  // Light mode is the predictable default for every fresh load.
+  let darkMode = false;
   let allEvents = [];
   let currentEvent = null;
   let currentWeather = [];   // [{hour, temp_c, rh, wind_speed_kmh, wind_dir}]
@@ -20,7 +21,7 @@
   let _isAdmin            = false;  // set after authentication
   let _syncPushInterval   = null;   // admin: pushes virtual time to server every 10s
   let _initialReplayFloor = null;   // protects the richer event-1 default from a stale saved clock
-  let _thermalViewMode    = '5d';   // cumulative activity is the monitoring default
+  let _thermalViewMode    = 'classification';   // source classification is the monitoring default
   let _thermalRefreshPoll = null;
   let _thermalLastObservedMs = null;
   const THERMAL_STATUS_POLL_MS = 5 * 60 * 1000;
@@ -33,6 +34,8 @@
 
     homeMap  = new window.HomeMap('home-map', openEvent);
     eventMap = new window.EventMap('event-map');
+    homeMap.setTheme(darkMode);
+    eventMap.setTheme(darkMode);
 
     // Forecast slider wiring
     document.addEventListener('input', function(e) {
@@ -152,7 +155,7 @@
     var savedEventId = null;
     try { savedEventId = window.localStorage.getItem('wildfire:selected-event-id'); } catch (e) {}
     var savedEvent = allEvents.find(function(ev) { return String(ev.id) === savedEventId; });
-    var preferred = allEvents.find(function(ev) { return ev.region_id === 'dhanbad_bokaro'; });
+    var preferred = allEvents.find(function(ev) { return ev.region_id === 'vijayanagar'; });
     openEvent(savedEvent || preferred || allEvents[0], true);
   }
 
@@ -328,10 +331,10 @@
     document.getElementById('thermal-view-title')?.classList.toggle('hidden', !thermal);
     document.getElementById('thermal-view-section')?.classList.toggle('hidden', !thermal);
     if (thermal) {
-      _thermalViewMode = '5d';
-      var defaultView = document.querySelector('input[name="thermal-view"][value="5d"]');
+      _thermalViewMode = 'classification';
+      var defaultView = document.querySelector('input[name="thermal-view"][value="classification"]');
       if (defaultView) defaultView.checked = true;
-      _renderThermalLegend('5d');
+      _renderThermalLegend('classification');
     }
 
     var dashboardTitle = document.querySelector('#bottom-header .bottom-title');
@@ -400,6 +403,7 @@
     var nextRefresh = status && status.next_refresh_at;
     var intervalMs = Number(status && status.interval_hours || 4) * 3600000;
     var stale = refreshed && Date.now() - new Date(refreshed).getTime() > intervalMs * 2;
+    var observationAge = observed && Date.now() - new Date(observed).getTime() > intervalMs * 2;
 
     if (state === 'running') {
       el.className = 'thermal-refresh-status updating';
@@ -409,6 +413,10 @@
       var latest = observed ? 'latest local detection ' + fmtDateTime(observed) : 'no local detection available';
       var retry = nextRefresh ? ' · retry scheduled ' + fmtDateTime(nextRefresh) : ' · retrying automatically';
       el.textContent = '⚠ NASA FIRMS refresh delayed · ' + latest + retry;
+    } else if (state === 'succeeded' && status && status.data_changed === false) {
+      el.className = 'thermal-refresh-status ' + (observationAge ? 'stale' : 'live');
+      var checked = refreshed ? 'checked ' + fmtDateTime(refreshed) + ' · ' : '';
+      el.textContent = '● NRT · ' + checked + 'no newer observations · latest ' + (observed ? fmtDateTime(observed) : 'unavailable');
     } else if (state === 'succeeded') {
       el.className = 'thermal-refresh-status live';
       var refreshLabel = refreshed ? 'refreshed ' + fmtDateTime(refreshed) + ' · ' : '';
@@ -517,7 +525,7 @@
       window_start: geojson.metadata && geojson.metadata.start,
       window_end: geojson.metadata && geojson.metadata.end,
       persistent_source_count: sourceView ? features.length : null,
-      persistence_level_counts: sourceView ? countValues('persistence_level') : {},
+      persistence_level_counts: sourceView ? countValues('persistence_level') : (fireCtx.thermal || {}).persistence_level_counts || {},
       highest_active_days: sourceView ? Math.max.apply(null, features.map(function(feature) {
         return Number((feature.properties || {}).unique_active_days || 0);
       }).concat([0])) : null,
@@ -527,15 +535,15 @@
       highest_night_ratio: sourceView ? Math.max.apply(null, features.map(function(feature) {
         return Number((feature.properties || {}).night_ratio || 0);
       }).concat([0])) : null,
-      classification_counts: classified ? countValues('source_class') : {},
+      classification_counts: classified ? countValues('source_class') : (fireCtx.thermal || {}).classification_counts || {},
       emergency_candidate_count: classified
         ? countTruthy('is_emergency_candidate')
-        : null,
+        : ((fireCtx.thermal || {}).emergency_candidate_count != null ? (fireCtx.thermal || {}).emergency_candidate_count : null),
       classification_mean_confidence: classified && features.length
         ? features.reduce(function(total, feature) {
             return total + Number((feature.properties || {}).classification_confidence || 0);
           }, 0) / features.length
-        : null,
+        : ((fireCtx.thermal || {}).classification_mean_confidence != null ? (fireCtx.thermal || {}).classification_mean_confidence : null),
       classification_method: classified && geojson.metadata
         ? geojson.metadata.method
         : null,
@@ -601,7 +609,7 @@
             '<span class="ts-meta-val" id="ts-t1-label">—</span>' +
           '</div>' +
           '<div class="ts-meta-item">' +
-            '<span class="ts-meta-lbl">Imagery</span>' +
+            '<span class="ts-meta-lbl">Observation</span>' +
             '<span class="ts-meta-val" id="ts-sat-label">—</span>' +
           '</div>' +
           '<div class="ts-meta-item">' +
@@ -980,11 +988,10 @@
       window.AIModal?.setCrowdAvailable(false);
     });
 
-    // MODIS Terra true-color daily mosaic via NASA GIBS — set straight to slot date
+    // Keep the selected observation date visible in the replay metadata.
     const satEl = document.getElementById('ts-sat-label');
     if (ts.slot_time) {
-      const satDate = ts.slot_time.split('T')[0];
-      eventMap.setSatelliteDate(satDate);
+      const satDate = new Date(ts.nearest_t1 || ts.slot_time).toLocaleDateString('en-CA');
       if (satEl) satEl.textContent = satDate;
     }
 
@@ -1056,6 +1063,7 @@
         fireContext,
         forecast,
       );
+      window.Dashboard.updateHud(fireContext, currentEvent, _thermalViewMode);
       window.Dashboard.updateWeather(forecast);
       eventMap && eventMap.loadWindField(windHours);
       _initForecastSlider(forecast);
@@ -1113,6 +1121,11 @@
   function initTheme() {
     var btn = document.getElementById('theme-toggle');
     if (!btn) return;
+    document.body.classList.toggle('light', !darkMode);
+    document.body.classList.toggle('dark', darkMode);
+    btn.innerHTML = darkMode
+      ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="5.64"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/></svg>'
+      : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
     btn.addEventListener('click', function() {
       darkMode = !darkMode;
       document.body.classList.toggle('light', !darkMode);

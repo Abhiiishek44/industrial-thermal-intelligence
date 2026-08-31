@@ -26,6 +26,8 @@ services:
       - "5000:5000"
     environment:
       DB_HOST: db
+      PROJ_DATA: /usr/share/proj
+      PROJ_LIB: /usr/share/proj
     depends_on:
       db:
         condition: service_healthy
