@@ -24,6 +24,7 @@ class ThermalRefreshTests(unittest.TestCase):
         self.assertTrue(settings["enabled"])
         self.assertEqual(settings["interval_hours"], 4.0)
         self.assertEqual(settings["lookback_days"], 2)
+        self.assertEqual(settings["failure_retry_minutes"], 15)
 
     def test_successful_refresh_advances_event_and_rebuilds_timeline(self):
         event = SimpleNamespace(

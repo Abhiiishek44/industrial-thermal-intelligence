@@ -152,8 +152,20 @@ def _run_thermal_monitoring_stage(event, ts, study) -> None:
             str(key): int(value)
             for key, value in observations.get(column, pd.Series(dtype="string")).dropna().value_counts().items()
         }
+        from pipeline.event_config import get_event_config
+
+        config = get_event_config(event)
         context = {
             "analysis_mode": "thermal_monitoring",
+            "region": {
+                "event_id": event.id,
+                "region_id": config.region_id,
+                "name": config.name,
+                "state": config.state,
+                "country_code": config.country_code,
+                "monitoring_focus": config.monitoring_focus,
+                "bbox": list(config.view_bbox or config.bbox),
+            },
             "classification": {
                 "status": "not_configured",
                 "message": "Wildfire LR prediction is not applied to industrial thermal detections.",

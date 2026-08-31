@@ -57,7 +57,6 @@
     if (window.CrowdPanel) window.CrowdPanel.init();
     initMobileFAB();
     initLeftPanelCollapse();
-    initChatColCollapse();
 
     document.getElementById('nav-home-btn')?.addEventListener('click', function() { goHome(); });
 
@@ -150,8 +149,11 @@
       showView('home');
       return;
     }
+    var savedEventId = null;
+    try { savedEventId = window.localStorage.getItem('wildfire:selected-event-id'); } catch (e) {}
+    var savedEvent = allEvents.find(function(ev) { return String(ev.id) === savedEventId; });
     var preferred = allEvents.find(function(ev) { return ev.region_id === 'dhanbad_bokaro'; });
-    openEvent(preferred || allEvents[0], true);
+    openEvent(savedEvent || preferred || allEvents[0], true);
   }
 
   function renderRegionSelector(events) {
@@ -192,12 +194,23 @@
   async function openEvent(ev, fromPopstate) {
     if (!ev) return;
     _stopThermalRefreshPolling();
+    Object.keys(_pollIntervals || {}).forEach(function(id) {
+      clearInterval(_pollIntervals[id]);
+      delete _pollIntervals[id];
+    });
+    Object.keys(_pollCrowdIntervals || {}).forEach(function(id) {
+      clearInterval(_pollCrowdIntervals[id]);
+      delete _pollCrowdIntervals[id];
+    });
     if (_syncPushInterval) { clearInterval(_syncPushInterval); _syncPushInterval = null; }
     if (window._syncRefetchInterval) { clearInterval(window._syncRefetchInterval); window._syncRefetchInterval = null; }
     currentEvent = ev;
     eventMap.setMonitoringFocus(ev.monitoring_focus);
     _applyAnalysisMode(ev);
-    history.replaceState({ eventId: ev.id }, '', '/demo');
+    try { window.localStorage.setItem('wildfire:selected-event-id', String(ev.id)); } catch (e) {}
+    var eventUrl = new URL(window.location.href);
+    eventUrl.searchParams.set('event_id', String(ev.id));
+    history.replaceState({ eventId: ev.id }, '', eventUrl.pathname + eventUrl.search + eventUrl.hash);
 
     var selector = document.getElementById('region-selector');
     var selectorMeta = document.getElementById('region-selector-meta');
@@ -229,6 +242,7 @@
     } finally {
       _hideEventLoading();
       if (selector) selector.disabled = false;
+      _refreshDevWindowState();
     }
     if (ev.analysis_mode === 'thermal_monitoring') {
       _startThermalRefreshPolling(ev.id);
@@ -383,6 +397,7 @@
     var state = status && status.status;
     var observed = status && status.last_observed_at;
     var refreshed = status && status.last_success_at;
+    var nextRefresh = status && status.next_refresh_at;
     var intervalMs = Number(status && status.interval_hours || 4) * 3600000;
     var stale = refreshed && Date.now() - new Date(refreshed).getTime() > intervalMs * 2;
 
@@ -391,10 +406,13 @@
       el.textContent = '↻ Updating FIRMS data…';
     } else if (state === 'failed' || stale) {
       el.className = 'thermal-refresh-status stale';
-      el.textContent = '⚠ Data refresh delayed · showing last successful data';
+      var latest = observed ? 'latest local detection ' + fmtDateTime(observed) : 'no local detection available';
+      var retry = nextRefresh ? ' · retry scheduled ' + fmtDateTime(nextRefresh) : ' · retrying automatically';
+      el.textContent = '⚠ NASA FIRMS refresh delayed · ' + latest + retry;
     } else if (state === 'succeeded') {
       el.className = 'thermal-refresh-status live';
-      el.textContent = '● NRT · latest observation ' + (observed ? fmtDateTime(observed) : 'unavailable');
+      var refreshLabel = refreshed ? 'refreshed ' + fmtDateTime(refreshed) + ' · ' : '';
+      el.textContent = '● NRT · ' + refreshLabel + (observed ? 'latest detection ' + fmtDateTime(observed) : 'no detections in the latest refresh');
     } else if (status && status.enabled === false) {
       el.className = 'thermal-refresh-status stale';
       el.textContent = 'Historical data · automatic refresh disabled';
@@ -815,9 +833,18 @@
   function _pollCrowdUntilDone(ts) {
     var key = 'crowd_' + ts.id;
     if (_pollCrowdIntervals[key]) return;
+    var startedAt = Date.now();
     _pollCrowdIntervals[key] = setInterval(async function() {
       try {
         var s = await window.API.getTsStatus(currentEvent.id, ts.id);
+        var failed = s.crowd_prediction_status === 'failed' || s.spatial_crowd_status === 'failed';
+        if (failed || Date.now() - startedAt > 10 * 60 * 1000) {
+          clearInterval(_pollCrowdIntervals[key]);
+          delete _pollCrowdIntervals[key];
+          _hidePredStatus();
+          showToast(failed ? 'Crowd processing failed.' : 'Crowd processing timed out.', 'error');
+          return;
+        }
         var crowdDone = s.crowd_prediction_status === 'done' && s.spatial_crowd_status === 'done';
         if (crowdDone) {
           clearInterval(_pollCrowdIntervals[key]);
@@ -903,6 +930,12 @@
         delete _pollIntervals[id];
       }
     });
+    Object.keys(_pollCrowdIntervals).forEach(function(key) {
+      if (key !== 'crowd_' + tsid) {
+        clearInterval(_pollCrowdIntervals[key]);
+        delete _pollCrowdIntervals[key];
+      }
+    });
 
     // Selecting a timestep always notifies the backend. Completed outputs stay
     // cached; unfinished stages are atomically claimed and built on demand.
@@ -957,6 +990,7 @@
 
     // Update AI context (does NOT open modal or load report yet)
     window.AIModal.setContext(eid, tsid);
+    _refreshDevWindowState();
 
     // Update crowd panel to show only reports up to this timestep's slot time
     if (window.CrowdPanel && ts.slot_time) {
@@ -1026,20 +1060,6 @@
       eventMap && eventMap.loadWindField(windHours);
       _initForecastSlider(forecast);
       window.AIModal.renderCard();
-    });
-  }
-
-  // ── Chat column collapse ──────────────────────────────────────────────────────
-
-  function initChatColCollapse() {
-    var btn = document.getElementById('chat-col-collapse-btn');
-    var col = document.getElementById('ai-chat-col');
-    if (!btn || !col) return;
-    function _toggle() { col.classList.toggle('chat-collapsed'); }
-    btn.addEventListener('click', _toggle);
-    // Clicking the title bar also expands when collapsed
-    col.querySelector('.chat-col-title').addEventListener('click', function(e) {
-      if (col.classList.contains('chat-collapsed') && e.target !== btn && !btn.contains(e.target)) _toggle();
     });
   }
 
@@ -1263,6 +1283,73 @@
 
   // ── DEV Window ────────────────────────────────────────────────────────────────
 
+  function _refreshDevWindowState() {
+    var win = document.getElementById('dev-window');
+    if (!win) return;
+    var ts = (_currentTsIndex >= 0 && _timestepsDone.length) ? _timestepsDone[_currentTsIndex] : null;
+    var hasEvent = !!currentEvent;
+    var hasTs = !!ts;
+    var thermal = hasEvent && currentEvent.analysis_mode === 'thermal_monitoring';
+
+    var regionEl = document.getElementById('dev-context-region');
+    var timestepEl = document.getElementById('dev-context-timestep');
+    var modeEl = document.getElementById('dev-context-mode');
+    if (regionEl) regionEl.textContent = hasEvent ? currentEvent.name : 'No region selected';
+    if (timestepEl) timestepEl.textContent = hasTs ? fmtDateTime(ts.slot_time) : 'Unavailable';
+    if (modeEl) modeEl.textContent = thermal ? 'Industrial thermal monitoring' : (hasEvent ? 'Wildfire prediction' : 'Unknown');
+
+    win.querySelectorAll('.dev-time-btn').forEach(function(btn) { btn.disabled = !_timestepsDone.length; });
+    var runBtn = document.getElementById('dev-run-pred-btn');
+    var engineTitle = document.getElementById('dev-engine-title');
+    var rerunBtn = document.getElementById('dev-rerun-pred-btn');
+    var rerunRptBtn = document.getElementById('dev-rerun-report-btn');
+    var rerunRptCrwBtn = document.getElementById('dev-rerun-report-crowd-btn');
+    var buildAllBtn = document.getElementById('dev-build-all-btn');
+    if (runBtn) {
+      runBtn.disabled = !hasTs;
+      runBtn.textContent = thermal ? '▶ Refresh Observation' : '▶ Run Prediction';
+    }
+    if (engineTitle) engineTitle.textContent = thermal ? 'Processing Engine' : 'Prediction Engine';
+    if (rerunBtn) {
+      rerunBtn.disabled = !hasTs || thermal;
+      rerunBtn.classList.toggle('hidden', thermal);
+    }
+    if (rerunRptBtn) rerunRptBtn.disabled = !hasTs;
+    if (rerunRptCrwBtn) {
+      rerunRptCrwBtn.disabled = !hasTs || thermal;
+      rerunRptCrwBtn.classList.toggle('hidden', thermal);
+    }
+    if (buildAllBtn) {
+      buildAllBtn.disabled = !hasEvent;
+      buildAllBtn.textContent = thermal ? '▶ Refresh All Observations' : '▶ Run All Slots';
+    }
+
+    var gtTitle = document.getElementById('dev-ground-truth-title');
+    var gtSection = document.getElementById('dev-ground-truth-section');
+    if (gtTitle) gtTitle.classList.toggle('hidden', thermal);
+    if (gtSection) gtSection.classList.toggle('hidden', thermal);
+    if (thermal) {
+      var actualToggle = document.getElementById('dev-actual-toggle');
+      if (actualToggle && actualToggle.checked) {
+        actualToggle.checked = false;
+        eventMap && eventMap.clearActualPerimeter();
+      }
+    }
+
+    var simulatorTab = win.querySelector('.dev-tab[data-tab="dev-tab-simulator"]');
+    if (simulatorTab) simulatorTab.classList.toggle('hidden', thermal);
+    if (thermal && simulatorTab && simulatorTab.classList.contains('active')) {
+      simulatorTab.classList.remove('active');
+      simulatorTab.setAttribute('aria-selected', 'false');
+      document.getElementById('dev-tab-simulator')?.classList.add('hidden');
+      var controlsTab = win.querySelector('.dev-tab[data-tab="dev-tab-controls"]');
+      controlsTab?.classList.add('active');
+      controlsTab?.setAttribute('aria-selected', 'true');
+      document.getElementById('dev-tab-controls')?.classList.remove('hidden');
+    }
+    _updateSimBtnState();
+  }
+
   function initDevWindow() {
     var win     = document.getElementById('dev-window');
     var togBtn  = document.getElementById('dev-toggle-btn');
@@ -1273,22 +1360,20 @@
     // Toggle visibility
     togBtn && togBtn.addEventListener('click', function() {
       win.classList.toggle('hidden');
-      if (!win.classList.contains('hidden')) {
-
-        var runBtn         = document.getElementById('dev-run-pred-btn');
-        var rerunBtn       = document.getElementById('dev-rerun-pred-btn');
-        var rerunRptBtn    = document.getElementById('dev-rerun-report-btn');
-        var rerunRptCrwBtn = document.getElementById('dev-rerun-report-crowd-btn');
-        var buildAllBtn    = document.getElementById('dev-build-all-btn');
-        if (runBtn)         runBtn.disabled         = !currentEvent;
-        if (rerunBtn)       rerunBtn.disabled       = !currentEvent;
-        if (rerunRptBtn)    rerunRptBtn.disabled    = !currentEvent;
-        if (rerunRptCrwBtn) rerunRptCrwBtn.disabled = !currentEvent;
-        if (buildAllBtn)    buildAllBtn.disabled    = !currentEvent;
-        _updateSimBtnState();
-      }
+      var isOpen = !win.classList.contains('hidden');
+      togBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+      win.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+      if (isOpen) _refreshDevWindowState();
     });
-    closeBtn && closeBtn.addEventListener('click', function() { win.classList.add('hidden'); });
+    closeBtn && closeBtn.addEventListener('click', function() {
+      win.classList.add('hidden');
+      win.setAttribute('aria-hidden', 'true');
+      togBtn?.setAttribute('aria-expanded', 'false');
+      togBtn?.focus();
+    });
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && !win.classList.contains('hidden')) closeBtn?.click();
+    });
 
     // Tab switching
     win.addEventListener('click', function(e) {
@@ -1296,8 +1381,10 @@
       if (!tab) return;
       var targetId = tab.dataset.tab;
       win.querySelectorAll('.dev-tab').forEach(function(t) { t.classList.remove('active'); });
+      win.querySelectorAll('.dev-tab').forEach(function(t) { t.setAttribute('aria-selected', 'false'); });
       win.querySelectorAll('.dev-tab-panel').forEach(function(p) { p.classList.add('hidden'); });
       tab.classList.add('active');
+      tab.setAttribute('aria-selected', 'true');
       var panel = document.getElementById(targetId);
       if (panel) panel.classList.remove('hidden');
     });
@@ -1317,8 +1404,10 @@
       if (!dragging) return;
       win.style.right  = 'auto';
       win.style.bottom = 'auto';
-      win.style.left   = (origLeft + e.clientX - startX) + 'px';
-      win.style.top    = (origTop  + e.clientY - startY) + 'px';
+      var maxLeft = Math.max(0, window.innerWidth - win.offsetWidth);
+      var maxTop = Math.max(0, window.innerHeight - 44);
+      win.style.left   = Math.max(0, Math.min(maxLeft, origLeft + e.clientX - startX)) + 'px';
+      win.style.top    = Math.max(0, Math.min(maxTop, origTop + e.clientY - startY)) + 'px';
     });
     document.addEventListener('mouseup', function() { dragging = false; });
 
@@ -1332,6 +1421,7 @@
     function _devUpdatePendingLabel() {
       if (!_devPendingLabel) return;
       var parts = [];
+      if (_devPendingDay !== 0) parts.push((_devPendingDay > 0 ? '+' : '') + _devPendingDay + 'd');
       if (_devPendingMs !== 0) {
         var totalH = _devPendingMs / 3600000;
         var d = Math.trunc(totalH / 24);
@@ -1403,7 +1493,11 @@
           _pollUntilDone(ts);
           btn.disabled = false;
         })
-        .catch(function() { btn.disabled = false; });
+        .catch(function(err) {
+          btn.disabled = false;
+          _hidePredStatus();
+          showToast('Processing failed to start: ' + (err.message || 'unknown error'), 'error');
+        });
     });
 
     // ── Rerun Prediction (force + crowd data) ────────────────────────────────
@@ -1421,6 +1515,8 @@
         })
         .catch(function(err) {
           btn.disabled = false;
+          _hidePredStatus();
+          showToast('Crowd processing failed to start: ' + (err.message || 'unknown error'), 'error');
         });
     });
 

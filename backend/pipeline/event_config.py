@@ -104,7 +104,7 @@ def _monitoring_event(region) -> EventConfig:
         # second Overpass dataset for roads across every region quickly hits
         # public-service rate limits and is not required by these views.
         roads_provider="none",
-        population_provider="none",
+        population_provider="worldpop_2026",
         actual_perimeter_provider="none",
         thermal_history_start=region.history_start,
         thermal_history_end=region.history_end,

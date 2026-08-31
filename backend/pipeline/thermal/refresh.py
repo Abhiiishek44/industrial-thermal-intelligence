@@ -15,6 +15,7 @@ log = logging.getLogger(__name__)
 
 DEFAULT_REFRESH_INTERVAL_HOURS = 4.0
 DEFAULT_LIVE_LOOKBACK_DAYS = 2
+DEFAULT_FAILURE_RETRY_MINUTES = 15
 
 _refresh_lock = threading.Lock()
 _scheduler_lock = threading.Lock()
@@ -30,14 +31,18 @@ def _enabled(value: str | None, default: bool = True) -> bool:
 def get_refresh_settings() -> dict:
     interval = float(os.getenv("THERMAL_REFRESH_INTERVAL_HOURS", DEFAULT_REFRESH_INTERVAL_HOURS))
     lookback = int(os.getenv("THERMAL_LIVE_LOOKBACK_DAYS", DEFAULT_LIVE_LOOKBACK_DAYS))
+    failure_retry = int(os.getenv("THERMAL_FAILURE_RETRY_MINUTES", DEFAULT_FAILURE_RETRY_MINUTES))
     if interval <= 0:
         raise ValueError("THERMAL_REFRESH_INTERVAL_HOURS must be greater than zero")
     if lookback < 1 or lookback > 5:
         raise ValueError("THERMAL_LIVE_LOOKBACK_DAYS must be between 1 and 5")
+    if failure_retry < 1 or failure_retry > 60:
+        raise ValueError("THERMAL_FAILURE_RETRY_MINUTES must be between 1 and 60")
     return {
         "enabled": _enabled(os.getenv("THERMAL_AUTO_REFRESH"), default=True),
         "interval_hours": interval,
         "lookback_days": lookback,
+        "failure_retry_minutes": failure_retry,
     }
 
 
@@ -171,7 +176,7 @@ def refresh_thermal_event(event, *, now: datetime | None = None) -> dict:
             event,
             status="failed",
             error=str(exc),
-            next_refresh_at=(attempted_at + timedelta(hours=settings["interval_hours"])).isoformat(),
+            next_refresh_at=(attempted_at + timedelta(minutes=settings["failure_retry_minutes"])).isoformat(),
         )
         raise
 
@@ -191,8 +196,9 @@ def refresh_all_thermal_events(app) -> list[dict]:
             for event in events:
                 try:
                     results.append(refresh_thermal_event(event))
-                except Exception:
+                except Exception as exc:
                     # One unavailable region or sensor must not block the rest.
+                    results.append({"event_id": event.id, "status": "failed", "error": str(exc)})
                     continue
             return results
     finally:
@@ -216,10 +222,14 @@ def start_thermal_refresh_scheduler(app):
         _scheduler_started = True
 
     def _run() -> None:
-        interval_seconds = settings["interval_hours"] * 3600
         while True:
-            refresh_all_thermal_events(app)
-            threading.Event().wait(interval_seconds)
+            results = refresh_all_thermal_events(app)
+            retrying = any(result.get("status") != "succeeded" for result in results)
+            delay_seconds = (
+                settings["failure_retry_minutes"] * 60
+                if retrying else settings["interval_hours"] * 3600
+            )
+            threading.Event().wait(delay_seconds)
 
     thread = threading.Thread(target=_run, name="thermal-firms-refresh", daemon=True)
     thread.start()
