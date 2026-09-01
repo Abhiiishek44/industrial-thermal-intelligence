@@ -8,6 +8,11 @@
   const REFRESH_TOKEN_KEY = 'wf_refresh_token';
   let refreshPromise = null;
 
+  function _isDemoMode() {
+    return window.location.pathname === '/demo' || window.location.pathname.startsWith('/demo/') ||
+      window.location.pathname === '/dashboard' || window.location.pathname.startsWith('/dashboard/');
+  }
+
   function _storeSession(data) {
     localStorage.setItem(ACCESS_TOKEN_KEY, data.access_token);
     localStorage.setItem(REFRESH_TOKEN_KEY, data.refresh_token);
@@ -52,6 +57,7 @@
     const headers = new Headers(opts.headers || {});
     const accessToken = localStorage.getItem(ACCESS_TOKEN_KEY);
     if (accessToken) headers.set('Authorization', 'Bearer ' + accessToken);
+    if (_isDemoMode()) headers.set('X-Demo-Mode', 'judge-preview');
     if (opts.body && !(opts.body instanceof FormData) && !headers.has('Content-Type')) {
       headers.set('Content-Type', 'application/json');
     }

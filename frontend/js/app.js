@@ -1183,6 +1183,21 @@
   // ── Auth (JWT access + rotating refresh tokens) ───────────────────────────────
 
   function initAuth() {
+    var demoMode = window.location.pathname === '/demo' || window.location.pathname.startsWith('/demo/') ||
+      window.location.pathname === '/dashboard' || window.location.pathname.startsWith('/dashboard/');
+    if (demoMode) {
+      hideAuthModal();
+      updateAuthUI('Demo', false);
+      document.getElementById('auth-logout-btn')?.addEventListener('click', function() {
+        try {
+          window.localStorage.removeItem('wf_access_token');
+          window.localStorage.removeItem('wf_refresh_token');
+        } catch (e) {}
+        window.location.replace('/');
+      });
+      return;
+    }
+
     var authMode = 'login';
     var form = document.getElementById('auth-form');
     var toggle = document.getElementById('auth-mode-toggle');

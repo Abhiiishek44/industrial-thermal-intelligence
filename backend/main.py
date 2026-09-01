@@ -40,11 +40,13 @@ def create_app():
     app.register_blueprint(crowd_bp,     url_prefix='/api/events')
 
     # ── Frontend routes ───────────────────────────────────────────────────────
-    from flask import send_from_directory, redirect
+    from flask import redirect, request, send_from_directory
 
     @app.route('/')
+    @app.route('/login')
+    @app.route('/signup')
     def index():
-        return redirect('/demo')
+        return send_from_directory(str(FRONTEND_DIR), 'index.html')
 
     @app.route('/health')
     def health():
@@ -62,8 +64,20 @@ def create_app():
 
     @app.route('/demo')
     @app.route('/demo/')
-    def demo():
-        return send_from_directory(str(FRONTEND_DIR), 'index.html')
+    @app.route('/demo/dashboard')
+    @app.route('/demo/dashboard/')
+    @app.route('/dashboard')
+    @app.route('/dashboard/')
+    def dashboard():
+        return send_from_directory(str(FRONTEND_DIR), 'dashboard.html')
+
+    @app.route('/demo/dashboard.html')
+    @app.route('/dashboard.html')
+    def legacy_dashboard_url():
+        """Keep old links working while exposing the extension-free URL."""
+        query = request.query_string.decode('latin-1')
+        target = '/demo/dashboard' + (f'?{query}' if query else '')
+        return redirect(target, code=308)
 
     @app.route('/css/<path:filename>')
     def frontend_css(filename):
@@ -74,7 +88,8 @@ def create_app():
         return send_from_directory(str(FRONTEND_DIR / 'js'), filename)
 
     @app.route('/demo/<path:filename>')
-    def demo_static(filename):
+    @app.route('/dashboard/<path:filename>')
+    def dashboard_static(filename):
         return send_from_directory(str(FRONTEND_DIR), filename)
 
     return app
