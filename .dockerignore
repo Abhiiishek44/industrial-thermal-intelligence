@@ -1,0 +1,24 @@
+.git/
+.github/
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+**/__pycache__/
+**/*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Runtime data is large and belongs on the Railway volume at /app/data.
+data/
+data_prep/
+
+# Local-only material that is not required by the runtime image.
+AGENT/
+tests/
+assets/
+docs/
+docker/
+*.log

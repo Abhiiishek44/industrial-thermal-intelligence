@@ -1,6 +1,7 @@
 import config  # loads .env variables
 import logging
 import os
+import time
 from flask import Flask
 from flask_cors import CORS
 from pathlib import Path
@@ -45,6 +46,20 @@ def create_app():
     def index():
         return redirect('/demo')
 
+    @app.route('/health')
+    def health():
+        """Railway readiness check: HTTP is live and Postgres is reachable."""
+        from flask import jsonify
+        from sqlalchemy import text
+
+        try:
+            db.session.execute(text("SELECT 1"))
+        except Exception as exc:
+            db.session.rollback()
+            app.logger.warning("Health check database query failed: %s", exc)
+            return jsonify({"status": "unhealthy", "database": "unavailable"}), 503
+        return jsonify({"status": "healthy", "database": "available"}), 200
+
     @app.route('/demo')
     @app.route('/demo/')
     def demo():
@@ -63,6 +78,32 @@ def create_app():
         return send_from_directory(str(FRONTEND_DIR), filename)
 
     return app
+
+
+def _setup_database_with_retry(app):
+    """Wait for a separately managed database to accept connections."""
+    from pipeline.db import setup_db
+    from psycopg2 import OperationalError as PsycopgOperationalError
+    from sqlalchemy.exc import OperationalError as SqlalchemyOperationalError
+
+    attempts = max(1, int(os.getenv("DB_STARTUP_MAX_ATTEMPTS", "12")))
+    retry_seconds = max(0.1, float(os.getenv("DB_STARTUP_RETRY_SECONDS", "5")))
+
+    for attempt in range(1, attempts + 1):
+        try:
+            setup_db(app)
+            return
+        except (PsycopgOperationalError, SqlalchemyOperationalError) as exc:
+            if attempt == attempts:
+                raise
+            logging.warning(
+                "Database is not ready (attempt %d/%d): %s; retrying in %.1fs",
+                attempt,
+                attempts,
+                exc,
+                retry_seconds,
+            )
+            time.sleep(retry_seconds)
 
 
 def _sweep_desynced_timesteps(app):
@@ -119,7 +160,6 @@ def _sweep_desynced_timesteps(app):
 
 if __name__ == '__main__':
     import threading
-    from pipeline.db import setup_db
     from pipeline.env import prepare_all_events
     from pipeline.check import run_checks
 
@@ -127,7 +167,7 @@ if __name__ == '__main__':
 
     # DB must finish before Flask starts (API needs tables to exist)
     print("=== Setting up database ===")
-    setup_db(app)
+    _setup_database_with_retry(app)
     print("=== Database ready ===")
 
     # Pipeline runs in background — Flask starts immediately
@@ -148,4 +188,4 @@ if __name__ == '__main__':
     threading.Thread(target=_run_pipeline, daemon=True).start()
 
     print("=== Starting Flask ===")
-    app.run(host='0.0.0.0', debug=False, port=5000)
+    app.run(host='0.0.0.0', debug=False, port=int(os.getenv("PORT", "5000")))
