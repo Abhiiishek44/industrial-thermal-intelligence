@@ -114,13 +114,29 @@
     '</table>';
   }
 
-  function renderThermalDashboard(el, fireCtx, weatherForecast) {
+  function renderThermalDashboard(el, fireCtx, weatherForecast, industrialFacilities) {
     const fire = fireCtx.fire || {};
     const thermal = fireCtx.thermal || {};
     const wf = weatherForecast || [];
     const landcover = thermal.landcover_group_counts || {};
     const confidence = thermal.confidence_counts || {};
     const industries = thermal.nearest_industries || [];
+    const facilityFeatures = industrialFacilities && Array.isArray(industrialFacilities.features)
+      ? industrialFacilities.features : [];
+    const powerPlants = Array.from(facilityFeatures.reduce(function(plants, feature) {
+      const properties = feature.properties || {};
+      const name = String(properties.name || '').trim();
+      if (
+        properties.industry_type !== 'power_plant' ||
+        !name ||
+        /^unnamed industrial facility$/i.test(name)
+      ) return plants;
+      const key = name.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      if (!plants.has(key)) plants.set(key, properties);
+      return plants;
+    }, new Map()).values()).sort(function(left, right) {
+      return String(left.name).localeCompare(String(right.name));
+    });
     const viewLabel = thermal.view_mode === 'classification' ? 'Source Classification'
       : thermal.view_mode === 'persistent' ? 'Persistent Sources'
       : thermal.view_mode === '30d' ? '30-Day Activity'
@@ -193,11 +209,12 @@
       '</div>' +
 
       '<!-- Tile 4: Source Classification -->' +
-      '<div class="data-card p-5 flex flex-col gap-3 relative overflow-hidden" style="min-width:220px">' +
+      '<div class="data-card thermal-classification-card p-5 flex flex-col gap-3 relative overflow-hidden" style="min-width:220px">' +
         '<div class="font-label-caps text-label-caps text-on-surface-variant uppercase tracking-wider" style="font-size:10px;color:var(--text2);font-weight:700">Source Classification</div>' +
         '<div class="thermal-breakdown" role="img" aria-label="Source class breakdown">' +
           breakdownBars(thermal.classification_counts, classLabels, 'Classification counts unavailable') +
         '</div>' +
+        '<div class="thermal-summary-row"><span>Largest observed envelope</span><b>' + v(thermal.largest_thermal_footprint_km2, 2, 'km²') + '</b></div>' +
       '</div>' +
 
       '<!-- Tile 5: Persistence and alerts -->' +
@@ -211,6 +228,29 @@
       '</div>' +
 
       '<!-- Tile 6: Weather System Health -->' +
+      '<div class="data-card power-plant-card" style="min-width:260px">' +
+        '<div class="dash-card-title">Mapped Power Plants</div>' +
+        '<div style="display:flex;align-items:baseline;justify-content:space-between;margin:5px 0 7px">' +
+          '<strong style="font:700 24px/1 \'JetBrains Mono\',monospace">' + vn(powerPlants.length) + '</strong>' +
+          '<span style="font-size:9px;color:var(--text2)">OpenStreetMap context</span>' +
+        '</div>' +
+        (powerPlants.length ? powerPlants.map(plant => {
+          const gases = [
+            ['CO₂', plant.emissions_co2], ['SO₂', plant.emissions_so2], ['NOₓ', plant.emissions_nox],
+          ].filter(item => item[1] != null && item[1] !== '');
+          const capacity = plant.electricity_output || plant.output || plant.capacity || plant.generator_output;
+          return '<div style="padding:6px 0;border-top:1px solid var(--border)">' +
+            '<div style="display:flex;justify-content:space-between;gap:8px;font-size:10px"><b style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + text(plant.name) + '</b><span style="color:var(--text2);white-space:nowrap">' + text(capacity || 'Capacity not mapped') + '</span></div>' +
+            '<div style="margin-top:3px;font-size:9px;color:var(--text2)">Fuel/source: ' + text(plant.power_source || 'Unknown') + (plant.operator ? ' · ' + text(plant.operator) : '') + '</div>' +
+            (gases.length
+              ? '<div style="margin-top:3px;font-size:9px">Reported emissions: ' + gases.map(item => text(item[0] + ' ' + item[1])).join(' · ') + '</div>'
+              : '') +
+          '</div>';
+        }).join('') : '<div class="dash-empty">No mapped power-plant records in the current source.</div>') +
+        '<div style="margin-top:6px;font-size:8px;line-height:1.35;color:var(--text2)">Capacity and emissions appear only when supplied by the mapped source; imagery plumes are not gas measurements.</div>' +
+      '</div>' +
+
+      '<!-- Tile 7: Weather System Health -->' +
       '<div class="data-card" style="min-width:210px">' +
         '<div class="dash-card-title">System Weather</div>' +
         '<div id="fcast-weather" class="fcast-weather">' +
@@ -218,7 +258,7 @@
         '</div>' +
       '</div>' +
 
-      '<!-- Tile 7: Wind Forecast -->' +
+      '<!-- Tile 8: Wind Forecast -->' +
       '<div class="data-card dash-card-wide">' +
         '<div class="dash-card-title">Wind Forecast +12h</div>' +
         '<div id="dash-wind-sparkline">' + windSparkline(wf) + '</div>' +
@@ -231,7 +271,7 @@
       '</div>';
   }
 
-  function renderDashboard(analysis, fireCtx, weatherForecast) {
+  function renderDashboard(analysis, fireCtx, weatherForecast, industrialFacilities) {
     const el = document.getElementById('dashboard-content');
     if (!el) return;
 
@@ -248,7 +288,7 @@
     }
 
     if (fireCtx && fireCtx.analysis_mode === 'thermal_monitoring') {
-      renderThermalDashboard(el, fireCtx, weatherForecast);
+      renderThermalDashboard(el, fireCtx, weatherForecast, industrialFacilities);
       return;
     }
 

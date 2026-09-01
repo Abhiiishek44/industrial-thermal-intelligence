@@ -277,6 +277,7 @@
         perimeter: L.layerGroup().addTo(this.map),
         roads:     L.layerGroup().addTo(this.map),
         hotspots:  L.layerGroup().addTo(this.map),
+        facilities:L.layerGroup().addTo(this.map),
       };
       // Forest fire-season windows can contain thousands of FIRMS points.
       // Canvas avoids creating one SVG DOM node per detection.
@@ -318,6 +319,7 @@
         'Perimeter':           this._layers.perimeter,
         'Roads':               this._layers.roads,
         'Hotspots':            this._layers.hotspots,
+        'Mapped power plants': this._layers.facilities,
         'Wind Field':          this._windFieldGroup,
       }, { position: 'topright', collapsed: true }).addTo(this.map);
     }
@@ -456,18 +458,67 @@
       }).addTo(this._layers.hotspots);
     }
 
-    renderClassifiedSources(geojson) {
+    renderClassifiedSources(geojson, observations) {
       this._layers.hotspots.clearLayers();
-      if (!geojson?.features?.length) return;
       const renderer = this._hotspotCanvas;
+      const observationFeatures = observations?.features || [];
+
+      // Keep the real observation footprint visible beneath the classified
+      // cluster centroids. A classification centroid can represent many FIRMS
+      // pixels and should not make those source observations disappear.
+      if (observationFeatures.length) {
+        L.geoJSON({ type: 'FeatureCollection', features: observationFeatures }, {
+          pointToLayer(f, latlng) {
+            const frp = Number(f.properties?.frp_mean_mw ?? f.properties?.frp ?? 0);
+            return L.circleMarker(latlng, {
+              radius: Math.max(3.5, Math.min(7, 3.5 + Math.sqrt(Math.max(0, frp)) * .65)),
+              color: '#991b1b', fillColor: '#ef4444', fillOpacity: .82,
+              opacity: .95, weight: 1, renderer: renderer,
+            });
+          },
+          onEachFeature(f, layer) {
+            const p = f.properties || {};
+            const observed = p.observed_at || p.last_observed_at || 'Unknown';
+            const frp = p.frp_mean_mw ?? p.frp;
+            layer.bindPopup(
+              '<b>FIRMS thermal observation</b><br>' +
+              'Observed: ' + observed + '<br>' +
+              'FRP: ' + (frp != null ? Number(frp).toFixed(1) + ' MW' : 'N/A') + '<br>' +
+              'Sensor: ' + (p.satellites || p.satellite || 'Unknown')
+            );
+          },
+        }).addTo(this._layers.hotspots);
+      }
+
+      if (!geojson?.features?.length) return;
+      geojson.features.forEach((feature) => {
+        const coordinates = feature.geometry?.coordinates;
+        const p = feature.properties || {};
+        const footprintRadius = Number(p.thermal_footprint_radius_m);
+        if (!coordinates || coordinates.length < 2 || !Number.isFinite(footprintRadius) || footprintRadius <= 0) return;
+        const color = THERMAL_CLASS_COLORS[thermalClass(p.source_class)] || THERMAL_CLASS_COLORS.unknown;
+        L.circle([Number(coordinates[1]), Number(coordinates[0])], {
+          radius: footprintRadius,
+          color: color,
+          fillColor: color,
+          fillOpacity: 0.12,
+          opacity: 0.72,
+          weight: 1.4,
+          interactive: false,
+          renderer: renderer,
+        }).addTo(this._layers.hotspots);
+      });
       L.geoJSON(geojson, {
         pointToLayer(f, latlng) {
           const p = f.properties || {};
           const count = Number(p.detection_count || 1);
+          const footprintArea = Number(p.thermal_footprint_area_km2 || 0);
           const color = THERMAL_CLASS_COLORS[thermalClass(p.source_class)] ||
             THERMAL_CLASS_COLORS.unknown;
           return L.circleMarker(latlng, {
-            radius: Math.max(8, Math.min(19, 7 + Math.sqrt(count) * 1.5)),
+            radius: Math.max(10, Math.min(26,
+              8 + Math.sqrt(count) * 1.7 + Math.sqrt(Math.max(0, footprintArea)) * 2.2
+            )),
             color: color,
             fillColor: color,
             fillOpacity: 0.78,
@@ -480,10 +531,16 @@
           const evidence = Array.isArray(p.classification_evidence)
             ? p.classification_evidence
             : [];
+          const footprint = p.thermal_footprint_area_km2 != null
+            ? Number(p.thermal_footprint_area_km2).toFixed(2) + ' km²'
+            : 'Unavailable';
+          const facilityDistance = p.distance_to_nearest_industry_m != null
+            ? Number(p.distance_to_nearest_industry_m).toFixed(0) + ' m'
+            : 'N/A';
           layer.bindPopup(
             '<b>' + (p.cluster_id || 'Thermal source') + '</b><br>' +
             'Classification: <b>' + thermalClassLabel(p.source_class) + '</b><br>' +
-            'State: ' + (p.operational_state || 'N/A').replaceAll('_', ' ') + '<br>' +
+            'Assessment state: ' + (p.operational_state || 'N/A').replaceAll('_', ' ') + '<br>' +
             'Alert: <b>' + (p.alert_level || 'N/A') + '</b><br>' +
             'Subtype: ' + (p.source_subtype || 'N/A').replaceAll('_', ' ') + '<br>' +
             'Confidence: ' + (p.classification_confidence != null
@@ -491,12 +548,56 @@
               : 'N/A') + '<br>' +
             'Detections / active days: ' + (p.detection_count || 0) + ' / ' +
               (p.unique_active_days || 0) + '<br>' +
+            'Mean / peak FRP: ' +
+              (p.mean_frp != null ? Number(p.mean_frp).toFixed(1) : 'N/A') + ' / ' +
+              (p.max_frp != null ? Number(p.max_frp).toFixed(1) : 'N/A') + ' MW<br>' +
+            'Observed footprint envelope: ' + footprint + '<br>' +
+            '<small>Derived from FIRMS pixel dimensions and cluster extent; not an affected-area estimate.</small><br>' +
+            'Nearest mapped facility: ' + (p.nearest_industry_name || 'Unknown') +
+              ' (' + facilityDistance + ')<br>' +
+            (p.nearest_power_source ? 'Mapped plant fuel: ' + p.nearest_power_source + '<br>' : '') +
             '<b>Evidence</b><br>' + (evidence.length ? evidence.map(function(item) {
               return '• ' + item;
             }).join('<br>') : 'No decisive evidence')
           );
         },
       }).addTo(this._layers.hotspots);
+    }
+
+    renderIndustrialFacilities(geojson) {
+      this._layers.facilities.clearLayers();
+      if (!geojson?.features?.length) return;
+      const renderer = this._hotspotCanvas;
+      const plantName = /power plant|thermal power|\bTPS\b|\bSTPS\b|\bUMPP\b|super thermal/i;
+      const features = geojson.features.filter(function(feature) {
+        const p = feature.properties || {};
+        return p.industry_type === 'power_plant' ||
+          p.industry_type === 'power_generator' ||
+          plantName.test(String(p.name || ''));
+      });
+      L.geoJSON({ type: 'FeatureCollection', features: features }, {
+        pointToLayer(f, latlng) {
+          const generator = f.properties?.industry_type === 'power_generator';
+          return L.circleMarker(latlng, {
+            radius: generator ? 4 : 6,
+            color: generator ? '#dc2626' : '#075985',
+            fillColor: generator ? '#ef4444' : '#22d3ee',
+            fillOpacity: generator ? .24 : .9,
+            opacity: .95, weight: generator ? 2 : 1.5, renderer: renderer,
+          });
+        },
+        onEachFeature(f, layer) {
+          const p = f.properties || {};
+          const generator = p.industry_type === 'power_generator';
+          layer.bindPopup(
+            '<b>' + (p.name || (generator ? 'Generator unit' : 'Power plant')) + '</b><br>' +
+            (generator ? 'Generator unit' : 'Power plant') +
+              ' — not a thermal detection<br>' +
+            'Fuel: ' + (p.power_source || 'Unknown') + '<br>' +
+            'Operator: ' + (p.operator || 'Unknown')
+          );
+        },
+      }).addTo(this._layers.facilities);
     }
 
     renderRiskZones(geojson) {

@@ -20,7 +20,7 @@ from pipeline.thermal.persistence import (
 )
 
 
-CLASSIFICATION_METHOD = "explainable_rules_v2"
+CLASSIFICATION_METHOD = "explainable_rules_v3"
 SOURCE_CLASSES = (
     "industrial_fire",
     "gas_flare",
@@ -259,7 +259,11 @@ def classify_source(source: pd.Series | dict) -> dict:
     if class_name in {
         "industrial_fire", "wildfire", "agricultural_burning",
     }:
-        operational_state = "active_fire"
+        # FIRMS establishes a satellite-observed thermal anomaly, not a
+        # ground-verified active fire. Keep fire-like classifications explicitly
+        # provisional until an independent incident/perimeter or field report
+        # confirms active burning.
+        operational_state = "fire_candidate"
     elif class_name == "unknown":
         operational_state = "uncertain"
     else:

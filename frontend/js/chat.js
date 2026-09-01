@@ -160,7 +160,7 @@
       btn.classList.add('ai-enhance-btn--active');
       btn.title = 'Switch back to standard (no crowd) report';
     } else {
-      btn.textContent = '⚡ Enhance with Crowd Data';
+      btn.textContent = 'Enhance with Crowd Data';
       btn.classList.remove('ai-enhance-btn--active');
       if (!_isAdmin) {
         btn.disabled = true;
@@ -902,7 +902,7 @@
 
   function _clearChat() {
     const msgs = document.getElementById('chat-messages');
-    if (msgs) msgs.innerHTML = '<div class="chat-welcome"><span class="chat-welcome-mark assistant-star" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2.8c.6 5.8 3.4 8.6 9.2 9.2-5.8.6-8.6 3.4-9.2 9.2-.6-5.8-3.4-8.6-9.2-9.2 5.8-.6 8.6-3.4 9.2-9.2Z"/></svg></span>' +
+    if (msgs) msgs.innerHTML = '<div class="chat-welcome"><span class="chat-welcome-mark assistant-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 5h14v11H9l-4 3z"/><path d="M8 9h8M8 12h5"/></svg></span>' +
       '<strong>How can I help?</strong><p>Ask about the current observation, evidence, exposure, or recommended actions.</p></div>';
   }
 

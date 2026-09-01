@@ -257,7 +257,15 @@ def collect_osm_industrial_context(event, study, *, session=requests) -> tuple[g
     """Cache OSM industrial land-use polygons and relevant infrastructure."""
     paths = ThermalContextPaths.from_project_dir(study.project_dir)
     if paths.industrial_areas_path.exists() and paths.facilities_path.exists():
-        return gpd.read_file(paths.industrial_areas_path), gpd.read_file(paths.facilities_path)
+        cached_areas = gpd.read_file(paths.industrial_areas_path)
+        cached_facilities = gpd.read_file(paths.facilities_path)
+        required_facility_fields = {
+            "name", "industry_type", "power_source", "operator",
+            "electricity_output", "emissions_co2", "emissions_so2", "emissions_nox",
+        }
+        if required_facility_fields.issubset(cached_facilities.columns):
+            return cached_areas, cached_facilities
+        log.info("[thermal-context] refreshing legacy facility cache for power-plant fields")
 
     min_lon, min_lat, max_lon, max_lat = get_event_config(event).bbox
     bbox = f"{min_lat},{min_lon},{max_lat},{max_lon}"
@@ -308,7 +316,11 @@ def collect_osm_industrial_context(event, study, *, session=requests) -> tuple[g
             "industry_type": _facility_type(tags),
             "industrial_tag": tags.get("industrial"),
             "power_source": tags.get("plant:source") or tags.get("generator:source"),
+            "electricity_output": tags.get("plant:output:electricity") or tags.get("generator:output:electricity"),
             "operator": tags.get("operator"),
+            "emissions_co2": tags.get("emission:co2") or tags.get("emissions:co2"),
+            "emissions_so2": tags.get("emission:so2") or tags.get("emissions:so2"),
+            "emissions_nox": tags.get("emission:nox") or tags.get("emissions:nox"),
             "osm_type": element.get("type"),
             "osm_id": str(element.get("id", "")),
             "source": "OpenStreetMap",
@@ -317,7 +329,8 @@ def collect_osm_industrial_context(event, study, *, session=requests) -> tuple[g
     facilities = (
         gpd.GeoDataFrame(facility_rows, geometry="geometry", crs="EPSG:4326")
         if facility_rows else _empty_geo_frame([
-            "name", "industry_type", "industrial_tag", "power_source", "operator",
+            "name", "industry_type", "industrial_tag", "power_source", "electricity_output",
+            "operator", "emissions_co2", "emissions_so2", "emissions_nox",
             "osm_type", "osm_id", "source",
         ])
     )
@@ -536,6 +549,9 @@ def enrich_thermal_history(event, study) -> dict:
             nearest_distance = None
             nearest_name = None
             nearest_type = None
+            nearest_operator = None
+            nearest_power_source = None
+            nearest_electricity_output = None
             count_500m = 0
             count_1km = 0
         else:
@@ -545,6 +561,9 @@ def enrich_thermal_history(event, study) -> dict:
             nearest = metric_facilities.loc[nearest_index]
             nearest_name = nearest.get("name")
             nearest_type = nearest.get("industry_type")
+            nearest_operator = nearest.get("operator")
+            nearest_power_source = nearest.get("power_source")
+            nearest_electricity_output = nearest.get("electricity_output")
             count_500m = int((distances <= 500.0).sum())
             count_1km = int((distances <= 1000.0).sum())
         context_rows.append({
@@ -554,6 +573,9 @@ def enrich_thermal_history(event, study) -> dict:
             "distance_to_nearest_industry_m": nearest_distance,
             "nearest_industry_type": nearest_type,
             "nearest_industry_name": nearest_name,
+            "nearest_industry_operator": nearest_operator,
+            "nearest_power_source": nearest_power_source,
+            "nearest_electricity_output": nearest_electricity_output,
             "industrial_feature_count_500m": count_500m,
             "industrial_feature_count_1km": count_1km,
             "near_industrial_facility": bool(

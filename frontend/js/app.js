@@ -48,11 +48,29 @@
     var dashEl = document.getElementById('dashboard-content');
     if (dashEl) {
       dashEl.addEventListener('wheel', function(e) {
-        if (e.deltaY !== 0) {
-          e.preventDefault();
-          dashEl.scrollLeft += e.deltaY;
-        }
-      }, { passive: false });
+        var maxScrollLeft = Math.max(0, dashEl.scrollWidth - dashEl.clientWidth);
+        if (!maxScrollLeft) return;
+
+        // Trackpads may report horizontal motion in deltaX; ordinary mouse
+        // wheels report it in deltaY. Convert line/page units to pixels so
+        // both inputs move the tray at a useful, consistent speed.
+        var rawDelta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+        if (!rawDelta) return;
+        var unit = e.deltaMode === 1
+          ? 32
+          : e.deltaMode === 2
+          ? Math.max(120, dashEl.clientWidth * 0.8)
+          : 1;
+        var nextScrollLeft = Math.max(
+          0,
+          Math.min(maxScrollLeft, dashEl.scrollLeft + rawDelta * unit),
+        );
+        if (nextScrollLeft === dashEl.scrollLeft) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+        dashEl.scrollLeft = nextScrollLeft;
+      }, { passive: false, capture: true });
     }
 
     window.AIModal.init();
@@ -359,6 +377,9 @@
     var forest = currentEvent && currentEvent.monitoring_focus === 'forest';
     if (mode === 'classification') {
       legend.innerHTML =
+        '<div class="leg-row"><span class="leg-swatch" style="background:#ef4444;opacity:.9;border:1px solid #991b1b"></span>FIRMS observation</div>' +
+        '<div class="leg-row"><span class="leg-swatch" style="background:rgba(239,68,68,.24);border:2px solid #dc2626"></span>Generator unit</div>' +
+        '<div class="leg-row"><span class="leg-swatch" style="background:#22d3ee;opacity:.9;border:1px solid #075985"></span>Power plant</div>' +
         '<div class="leg-row"><span class="leg-swatch" style="background:#dc2626;opacity:.8"></span>Industrial fire</div>' +
         '<div class="leg-row"><span class="leg-swatch" style="background:#a855f7;opacity:.8"></span>Gas flare</div>' +
         '<div class="leg-row"><span class="leg-swatch" style="background:#eab308;opacity:.8"></span>Agricultural burning</div>' +
@@ -482,6 +503,9 @@
       var properties = feature.properties || {};
       return Number(properties.bright_ti4 != null ? properties.bright_ti4 : properties.brightness);
     }).filter(Number.isFinite);
+    var footprintAreas = features.map(function(feature) {
+      return Number((feature.properties || {}).thermal_footprint_area_km2);
+    }).filter(Number.isFinite);
     var totalFrp = frpValues.reduce(function(total, value) { return total + value; }, 0);
     var classified = geojson.metadata && geojson.metadata.view === 'classification';
     var persistent = geojson.metadata && geojson.metadata.view === 'persistent';
@@ -546,6 +570,9 @@
         : ((fireCtx.thermal || {}).classification_mean_confidence != null ? (fireCtx.thermal || {}).classification_mean_confidence : null),
       classification_method: classified && geojson.metadata
         ? geojson.metadata.method
+        : null,
+      largest_thermal_footprint_km2: footprintAreas.length
+        ? Math.max.apply(null, footprintAreas)
         : null,
     });
     return fireCtx;
@@ -1017,6 +1044,13 @@
           );
     }
     var hotspotRequest = thermalActivityRequest || window.API.getHotspots(eid, tsid, _crowdMode);
+    var classificationObservationsRequest =
+      currentEvent.analysis_mode === 'thermal_monitoring' && _thermalViewMode === 'classification'
+        ? window.API.getThermalDetections(eid, 30, ts.slot_time)
+        : Promise.resolve({ type: 'FeatureCollection', features: [] });
+    var industrialFacilitiesRequest = currentEvent.analysis_mode === 'thermal_monitoring'
+      ? window.API.getIndustrialFacilities(eid)
+      : Promise.resolve({ type: 'FeatureCollection', features: [] });
 
     // Map layers (non-blocking)
     Promise.allSettled([
@@ -1025,16 +1059,22 @@
       window.API.getRiskZones(eid, tsid, _crowdMode),
       window.API.getRoads(eid, tsid),
       window.API.getWindRiskZones(eid, tsid),
+      classificationObservationsRequest,
+      industrialFacilitiesRequest,
     ]).then(function(r) {
       if (r[0].status === 'fulfilled') eventMap.renderPerimeter(r[0].value);
       if (r[1].status === 'fulfilled') {
         if (_thermalViewMode === 'persistent') eventMap.renderPersistentSources(r[1].value);
-        else if (_thermalViewMode === 'classification') eventMap.renderClassifiedSources(r[1].value);
+        else if (_thermalViewMode === 'classification') eventMap.renderClassifiedSources(
+          r[1].value,
+          r[5].status === 'fulfilled' ? r[5].value : null,
+        );
         else eventMap.renderHotspots(r[1].value);
       }
       if (r[2].status === 'fulfilled') eventMap.renderRiskZones(r[2].value);
       if (r[3].status === 'fulfilled') eventMap.renderRoads(r[3].value);
       if (r[4].status === 'fulfilled') eventMap.renderRiskZonesWind(r[4].value);
+      if (r[6].status === 'fulfilled') eventMap.renderIndustrialFacilities(r[6].value);
     });
 
     // If actual perimeter overlay is active, reload it for the new timestep
@@ -1050,6 +1090,7 @@
       window.API.getWeather(eid, tsid),
       window.API.getWindField(eid, tsid),
       hotspotRequest,
+      industrialFacilitiesRequest,
     ]).then(function(r) {
       var forecast  = r[2].status === 'fulfilled' ? r[2].value : [];
       var windHours = r[3].status === 'fulfilled' ? r[3].value : [];
@@ -1062,6 +1103,7 @@
         r[0].status === 'fulfilled' ? r[0].value : null,
         fireContext,
         forecast,
+        r[5].status === 'fulfilled' ? r[5].value : null,
       );
       window.Dashboard.updateHud(fireContext, currentEvent, _thermalViewMode);
       window.Dashboard.updateWeather(forecast);

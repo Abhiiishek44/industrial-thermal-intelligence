@@ -124,6 +124,9 @@
       var query = '?days=' + encodeURIComponent(days) + '&end=' + encodeURIComponent(end);
       return apiFetch('/api/events/' + eid + '/thermal/classifications' + query);
     },
+    async getIndustrialFacilities(eid) {
+      return apiFetch('/api/events/' + eid + '/layers/industrial-facilities');
+    },
 
     async getPerimeter(eid, tsid, crowd)  { return apiFetch('/api/events/' + eid + '/timesteps/' + tsid + '/perimeter' + (crowd ? '?crowd=true' : '')); },
     async getHotspots(eid, tsid, crowd)  { return apiFetch('/api/events/' + eid + '/timesteps/' + tsid + '/hotspots' + (crowd ? '?crowd=true' : '')); },

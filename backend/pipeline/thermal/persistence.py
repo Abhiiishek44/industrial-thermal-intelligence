@@ -74,6 +74,33 @@ def _json_value(value):
     return value
 
 
+def _footprint_metrics(scan_km, track_km, cluster_extent_m=0.0) -> tuple[float | None, float | None]:
+    """Return a transparent observation-envelope radius and area.
+
+    FIRMS ``scan``/``track`` describe the source pixel dimensions. Cluster extent
+    describes the distance from the derived source centre to its farthest
+    observation. The resulting circle is a display envelope, not a burned or
+    environmentally affected area.
+    """
+    try:
+        scan = float(scan_km)
+        track = float(track_km)
+    except (TypeError, ValueError):
+        scan = track = 0.0
+    try:
+        extent = max(0.0, float(cluster_extent_m or 0.0))
+    except (TypeError, ValueError):
+        extent = 0.0
+    pixel_radius = (
+        0.5 * math.hypot(scan, track) * 1000.0
+        if scan > 0 and track > 0 else 0.0
+    )
+    radius = extent + pixel_radius
+    if radius <= 0:
+        return None, None
+    return round(radius, 2), round(math.pi * radius * radius / 1_000_000.0, 4)
+
+
 def aggregate_multisensor_observations(
     observations: pd.DataFrame,
     *,
@@ -141,6 +168,12 @@ def aggregate_multisensor_observations(
         group = frame.iloc[indices]
         frp = pd.to_numeric(group.get("frp"), errors="coerce")
         brightness = pd.to_numeric(group.get("bright_ti4"), errors="coerce")
+        scan_values = pd.to_numeric(
+            group.get("scan", pd.Series(index=group.index, dtype=float)), errors="coerce",
+        )
+        track_values = pd.to_numeric(
+            group.get("track", pd.Series(index=group.index, dtype=float)), errors="coerce",
+        )
         representative_index = frp.idxmax() if frp.notna().any() else group.index[0]
         representative = frame.loc[representative_index].to_dict()
         first_seen = group["observed_at"].min()
@@ -162,6 +195,8 @@ def aggregate_multisensor_observations(
             "frp_max_mw": float(frp.max()) if frp.notna().any() else None,
             "brightness_ti4_mean_k": float(brightness.mean()) if brightness.notna().any() else None,
             "brightness_ti4_max_k": float(brightness.max()) if brightness.notna().any() else None,
+            "scan": float(scan_values.max()) if scan_values.notna().any() else None,
+            "track": float(track_values.max()) if track_values.notna().any() else None,
             "daynight": _mode(group.get("daynight", pd.Series(dtype="string"))),
             "confidence": _mode(group.get("confidence", pd.Series(dtype="string"))),
             "inside_industrial_polygon": bool(group.get(
@@ -257,6 +292,13 @@ def build_persistent_sources(
             )
             return float(values.max()) if values.notna().any() else None
 
+        scan_max = numeric_max("scan")
+        track_max = numeric_max("track")
+        cluster_extent = float(distances.max())
+        footprint_radius, footprint_area = _footprint_metrics(
+            scan_max, track_max, cluster_extent,
+        )
+
         rows.append({
             "cluster_id": f"cluster_{source_number:03d}",
             "latitude": center_lat,
@@ -285,7 +327,12 @@ def build_persistent_sources(
             "sensor_count": len(satellite_values),
             "satellites": ",".join(sorted(satellite_values)),
             "coordinate_variance_m2": float(np.mean(np.square(distances))),
-            "max_distance_from_center_m": float(distances.max()),
+            "max_distance_from_center_m": cluster_extent,
+            "scan_max_km": scan_max,
+            "track_max_km": track_max,
+            "thermal_footprint_radius_m": footprint_radius,
+            "thermal_footprint_area_km2": footprint_area,
+            "thermal_footprint_method": "FIRMS pixel plus observation-cluster envelope",
             "active_day_density": round(unique_days / max(duration_days + 1.0, 1.0), 4),
             "inside_industrial_polygon": bool(group.get(
                 "inside_industrial_polygon", pd.Series(False, index=group.index),
@@ -301,6 +348,15 @@ def build_persistent_sources(
             ),
             "nearest_industry_type": (
                 group.loc[nearest_index].get("nearest_industry_type") if nearest_index is not None else None
+            ),
+            "nearest_industry_operator": (
+                group.loc[nearest_index].get("nearest_industry_operator") if nearest_index is not None else None
+            ),
+            "nearest_power_source": (
+                group.loc[nearest_index].get("nearest_power_source") if nearest_index is not None else None
+            ),
+            "nearest_electricity_output": (
+                group.loc[nearest_index].get("nearest_electricity_output") if nearest_index is not None else None
             ),
             "industrial_feature_count_500m": numeric_max("industrial_feature_count_500m"),
             "industrial_feature_count_1km": numeric_max("industrial_feature_count_1km"),
@@ -402,6 +458,21 @@ def build_classification_candidates(
         ).fillna("").astype(str)
     singles["coordinate_variance_m2"] = 0.0
     singles["max_distance_from_center_m"] = 0.0
+    scan = pd.to_numeric(
+        singles.get("scan", pd.Series(index=singles.index, dtype=float)), errors="coerce",
+    )
+    track = pd.to_numeric(
+        singles.get("track", pd.Series(index=singles.index, dtype=float)), errors="coerce",
+    )
+    singles["scan_max_km"] = scan
+    singles["track_max_km"] = track
+    footprint = [
+        _footprint_metrics(scan_value, track_value)
+        for scan_value, track_value in zip(scan, track)
+    ]
+    singles["thermal_footprint_radius_m"] = [item[0] for item in footprint]
+    singles["thermal_footprint_area_km2"] = [item[1] for item in footprint]
+    singles["thermal_footprint_method"] = "FIRMS source-pixel envelope"
     singles["active_day_density"] = 1.0
     singles["persistence_level"] = "LOW"
 
