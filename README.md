@@ -26,10 +26,18 @@ when a FIRMS key is available.
 
 ### Explain
 
+<<<<<<< HEAD
 Enrich each detection with spatial context, identify persistent hotspot
 clusters, and apply transparent source-type rules. Classifications include
 `industrial_fire`, `gas_flare`, `agricultural_burning`, `mining_activity`,
 `wildfire`, `industrial_process_heat`, and `unknown`.
+=======
+### AI Situational Awareness Report — Overview
+Mode-aware executive briefing generated from region-scoped evidence. Wildfire reports
+cover spread, impact, and available road analysis; thermal-monitoring reports cover
+observations, source evidence, uncertainty, and verification actions without implying
+an unsupported spread forecast.
+>>>>>>> 7175d15568ccc08385a22793f10e8ca1d1b01f0a
 
 ### Investigate
 
@@ -50,7 +58,22 @@ The seeded public India catalog contains ten regions.
 - Korba
 - Jamnagar-Vadinar
 
+<<<<<<< HEAD
 **Forest-fire landscapes**
+=======
+- Six industrial corridors and four forest landscapes
+- Historical and near-real-time VIIRS FIRMS ingestion
+- Region/state identity and source provenance in every generated report
+- Explicit missing-data handling (`null`/unavailable rather than misleading zeroes)
+- Optional WorldPop 2026 population exposure within cumulative 1/3/5 km buffers
+- Multi-sensor deduplication and spatial-temporal source tracking
+- ESA WorldCover cropland, forest, built-up and bare-land context
+- OpenStreetMap industrial, oil/gas, power and mining infrastructure context
+- Separate persistent-source and short-lived thermal-episode analysis
+- Explainable seven-way rules-v2 classification with confidence and evidence
+- GeoJSON APIs and Leaflet overlays for 5-day, 30-day, persistence and classification views
+- Automatic four-hour region-scoped FIRMS refresh with dashboard freshness polling
+>>>>>>> 7175d15568ccc08385a22793f10e8ca1d1b01f0a
 
 - Gadchiroli-Tadoba
 - Kanha-Pench
@@ -85,6 +108,7 @@ layers.
 
 ## Repository layout
 
+<<<<<<< HEAD
 - [backend](backend) - Flask application, API routes, database models, and data pipeline
 - [frontend](frontend) - Leaflet interface, templates, styles, and browser logic
 - [data](data) - processed inputs, generated outputs, model assets, and uploads
@@ -92,6 +116,16 @@ layers.
 - [tests](tests) - thermal-monitoring, training-data, and dashboard regression tests
 - [docs/api.yaml](docs/api.yaml) - OpenAPI contract
 - [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) - detailed repository guide
+=======
+| Layer | Technology |
+|---|---|
+| Backend | Python 3.11, Flask, SQLAlchemy, PostgreSQL + PostGIS |
+| ML / Spatial | Logistic Regression, scikit-learn, GeoPandas, Rasterio, Shapely |
+| Weather | ERA5 via CDS API, VIIRS FIRMS |
+| AI | Anthropic Claude API (configurable to Gemini or Hugging Face) |
+| Frontend | Vanilla JS, Leaflet.js, CSS custom properties |
+| Auth | JWT access/refresh tokens (PyJWT), bcrypt |
+>>>>>>> 7175d15568ccc08385a22793f10e8ca1d1b01f0a
 
 ## Technology choices
 
@@ -101,7 +135,15 @@ layers.
 - **Analysis:** pandas, NumPy, scikit-learn, and XGBoost
 - **Optional AI integration:** Anthropic or Google Gemini
 
+<<<<<<< HEAD
 ## Run locally
+=======
+### Prerequisites
+- Python 3.11+
+- PostgreSQL with PostGIS extension
+- Anthropic, Google Gemini, or Hugging Face Inference Providers credentials
+- ERA5 CDS API credentials
+>>>>>>> 7175d15568ccc08385a22793f10e8ca1d1b01f0a
 
 ### Minimum dashboard setup
 
@@ -131,6 +173,7 @@ DB_HOST=localhost
 DB_PORT=5432
 DB_NAME=thermal_intelligence_db
 DB_USER=postgres
+<<<<<<< HEAD
 DB_PASSWORD=change-me-strong-password
 
 JWT_SECRET_KEY=change-me-random-64-chars
@@ -139,6 +182,19 @@ AUTO_PREPARE_REGIONS=vijayanagar
 
 FIRMS_HISTORY_AUTO_FETCH=0
 THERMAL_AUTO_REFRESH=0
+=======
+DB_PASSWORD=your-database-password
+LLM_PROVIDER=claude
+ANTHROPIC_API_KEY=sk-ant-...
+# GEMINI_API_KEY=...
+# HF_TOKEN=...
+# HF_MODEL=deepseek-ai/DeepSeek-V4-Flash
+JWT_SECRET_KEY=your-long-random-jwt-secret
+JWT_ACCESS_TOKEN_MINUTES=15
+JWT_REFRESH_TOKEN_DAYS=30
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=change-me-before-first-start
+>>>>>>> 7175d15568ccc08385a22793f10e8ca1d1b01f0a
 ```
 
 Run the server:

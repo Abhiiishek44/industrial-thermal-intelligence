@@ -88,9 +88,28 @@ def run_spatial_analysis(event_id: int, ts_id: int, out_dir: Path,
         bbox, perimeter_geom, risk, landmarks,
         ev_dir=ev_dir, hotspot_path=hotspot_path,
     )
-    population_path = ev_dir / "data_processed" / "spatial" / "population.gpkg"
-    ml_counts = population_counts(population_path, perimeter_geom, risk, event.year)
-    log.info("[spatial] ts=%d: ML affected_population=%d", ts_id, ml_counts.get("affected_population", 0))
+    from pipeline.event_config import get_event_config
+
+    config = get_event_config(event)
+    population_dir = ev_dir / "data_processed" / "spatial"
+    population_path = population_dir / "population.tif"
+    if not population_path.exists():
+        population_path = population_dir / "population.gpkg"
+    hotspot_geom = load_geom(hotspot_path)
+    ml_counts = population_counts(
+        population_path,
+        perimeter_geom,
+        risk,
+        event.year,
+        analysis_mode=config.analysis_mode,
+        hotspot_geom=hotspot_geom,
+    )
+    log.info(
+        "[spatial] ts=%d: population available=%s mode=%s",
+        ts_id,
+        ml_counts.get("data_available"),
+        ml_counts.get("exposure_mode"),
+    )
 
     # ── ML outputs ────────────────────────────────────────────────────────────
     ml_dir_out = out_dir / "ML"
@@ -119,8 +138,12 @@ def run_spatial_analysis(event_id: int, ts_id: int, out_dir: Path,
         ).to_file(wd_dir_out / "roads.geojson", driver="GeoJSON")
     if not (wd_dir_out / "population.json").exists():
         wd_counts = {
-            "affected_population": ml_counts.get("affected_population", 0),
+            "affected_population": ml_counts.get("affected_population"),
             "at_risk_3h": None, "at_risk_6h": None, "at_risk_12h": None,
+            "data_available": ml_counts.get("data_available", False),
+            "exposure_mode": "forecast_zones",
+            "reason": ml_counts.get("reason"),
+            "source": ml_counts.get("source"),
         }
         (wd_dir_out / "population.json").write_text(
             json.dumps(wd_counts, ensure_ascii=False, indent=2), encoding="utf-8"

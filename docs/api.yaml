@@ -301,13 +301,22 @@ components:
     PopulationAnalysis:
       type: object
       description: >
-        Population-at-risk counts from the spatial analysis stage.
-        Each ring counts only population NOT already counted in a closer horizon.
+        Authoritative population exposure from the spatial analysis stage. Wildfire
+        mode uses exclusive forecast rings; thermal monitoring uses cumulative
+        1/3/5 km proximity buffers. Missing data is represented by null metrics and
+        data_available=false, never by synthetic zeroes.
       properties:
+        data_available:      { type: boolean, example: true }
+        exposure_mode:       { type: string, enum: [forecast_zones, proximity_buffers] }
+        reason:              { type: string, nullable: true }
+        source:              { type: object, nullable: true, additionalProperties: true }
         affected_population: { type: integer, nullable: true, example: 45200, description: "Within fire perimeter" }
         at_risk_3h:          { type: integer, nullable: true, example: 12400, description: "Within +3h zone, excl. perimeter" }
         at_risk_6h:          { type: integer, nullable: true, example: 18700, description: "Within +6h zone, excl. inner rings" }
         at_risk_12h:         { type: integer, nullable: true, example: 27100, description: "Within +12h zone, excl. inner rings" }
+        within_1km:          { type: integer, nullable: true, description: "Estimated people within cumulative 1 km thermal-detection buffers" }
+        within_3km:          { type: integer, nullable: true, description: "Estimated people within cumulative 3 km thermal-detection buffers" }
+        within_5km:          { type: integer, nullable: true, description: "Estimated people within cumulative 5 km thermal-detection buffers" }
 
     # ── AI Report ─────────────────────────────────────────────────────────────
 
@@ -329,12 +338,7 @@ components:
       description: Structured human impact assessment from the Impact Agent
       properties:
         population:
-          type: object
-          properties:
-            within_perimeter: { type: integer, example: 45200 }
-            at_risk_3h:       { type: integer, example: 12400 }
-            at_risk_6h:       { type: integer, example: 18700 }
-            at_risk_12h:      { type: integer, example: 27100 }
+          $ref: '#/components/schemas/PopulationAnalysis'
         communities_affected:
           type: array
           items:
@@ -401,7 +405,15 @@ components:
       properties:
         risk_level:
           type: string
-          enum: [Critical, High, Moderate, Low]
+          enum: [Critical, High, Moderate, Low, Unknown]
+        assessment_level:
+          type: string
+          nullable: true
+          enum: [Priority review, Review, No detections]
+          description: "Non-forecast triage level used by thermal-monitoring reports"
+        report_mode:
+          type: string
+          enum: [wildfire_prediction, thermal_monitoring]
         key_points:
           type: array
           items: { type: string }
@@ -415,6 +427,10 @@ components:
           $ref: '#/components/schemas/AiImpactAnalysis'
         evacuation:
           $ref: '#/components/schemas/AiEvacuationAnalysis'
+        metadata:
+          type: object
+          description: Non-secret provider/model provenance, input hash, region, source availability, and warnings
+          additionalProperties: true
         crowd:
           allOf:
             - $ref: '#/components/schemas/AiCrowdAnalysis'

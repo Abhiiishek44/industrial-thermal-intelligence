@@ -99,7 +99,7 @@ Threshold: `0.42211` — loaded from `model_full_thresholds.json` key `"lr_steps
 To switch models, update `model_name` in `backend/pipeline/check/builder.py` (`_load_predictor`)
 and the default in `backend/pipeline/predict/risk_zones.py` (`load_youden_threshold`).
 
-## Population Count Fields
+## Population Exposure Fields
 
 Stored in DB (`EventTimestep`). Retrieved via:
 
@@ -110,12 +110,16 @@ GET /api/events/{event_id}/timesteps/{ts_id}/wind-field          ← all hours
 GET /api/events/{event_id}/timesteps/{ts_id}/wind-field?hour=N   ← single hour [u,v]
 ```
 
+Wildfire-prediction mode uses forecast-zone rings:
+
 ```json
 {
   "affected_population": 45200,
   "at_risk_3h":          12400,
   "at_risk_6h":          18700,
-  "at_risk_12h":         27100
+  "at_risk_12h":         27100,
+  "data_available": true,
+  "exposure_mode": "forecast_zones"
 }
 ```
 
@@ -127,3 +131,20 @@ GET /api/events/{event_id}/timesteps/{ts_id}/wind-field?hour=N   ← single hour
 | `at_risk_12h` | Inside +12h high-risk zone, excluding perimeter, +3h, and +6h zones |
 
 Each ring counts only the *additional* population not already counted in a closer horizon.
+
+Thermal-monitoring mode does not claim a spread forecast. When a WorldPop raster is
+configured it returns cumulative proximity estimates:
+
+```json
+{
+  "within_1km": 1200,
+  "within_3km": 8400,
+  "within_5km": 21600,
+  "data_available": true,
+  "exposure_mode": "proximity_buffers",
+  "source": {"provider": "WorldPop", "dataset_year": 2026}
+}
+```
+
+When population data is missing, every metric is `null`, `data_available` is false,
+and `reason` explains why. Missing data must never be interpreted as zero exposure.

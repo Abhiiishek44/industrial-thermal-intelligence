@@ -11,12 +11,17 @@ All steps are idempotent (skip-if-exists). Safe to re-run.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 log = logging.getLogger(__name__)
 
 _DATA_DIR   = Path(__file__).resolve().parents[2] / "data"
 _MODELS_DIR = _DATA_DIR / "static" / "models"
+_WORLDPOP_1KM_URL = (
+    "https://data.worldpop.org/GIS/Population/Global_2015_2030/R2025A/2026/"
+    "IND/v1/1km_ua/constrained/ind_pop_2026_CN_1km_R2025A_UA_v1.tif"
+)
 
 _STATIC_FILES = {
     "population.gpkg":                         "https://zenodo.org/records/19434352/files/population.gpkg?download=1",
@@ -570,14 +575,69 @@ def _prebuild_population(event, study) -> None:
     from pipeline.event_config import get_event_config
     from pipeline.spatial.spatial_helpers import event_bbox
 
-    out_path = study.data_processed_dir / "spatial" / "population.gpkg"
-    if out_path.exists():
-        print("[env] population.gpkg — already exists, skip")
+    vector_out = study.data_processed_dir / "spatial" / "population.gpkg"
+    raster_out = study.data_processed_dir / "spatial" / "population.tif"
+    if vector_out.exists() or raster_out.exists():
+        print("[env] population cache — already exists, skip")
         return
 
     config = get_event_config(event)
     if config.population_provider == "none":
         log.info("[env] event %d has no configured population provider", event.id)
+        return
+    if config.population_provider == "worldpop_2026":
+        import json
+        import rasterio
+        from pyproj import Transformer
+        from rasterio.mask import mask
+        from shapely.geometry import box, mapping
+        from shapely.ops import transform
+
+        # The 1 km WorldPop grid is the bundled/default operational source. It
+        # is small enough to provision locally while still matching the
+        # dashboard's 1/3/5 km exposure bands. Deployments can override this
+        # with the official 100 m raster through WORLDPOP_RASTER_PATH.
+        default_source = _DATA_DIR / "static" / "ind_pop_2026_CN_1km_R2025A_UA_v1.tif"
+        source = Path(os.getenv("WORLDPOP_RASTER_PATH", str(default_source))).expanduser()
+        if source == default_source and not source.exists():
+            _download_default_worldpop(source)
+        if not source.exists():
+            log.warning(
+                "[env] WorldPop source not found for event %d: %s; "
+                "population exposure will be marked unavailable",
+                event.id,
+                source,
+            )
+            return
+        with rasterio.open(source) as dataset:
+            shape = box(*event_bbox(event))
+            if dataset.crs and str(dataset.crs) != "EPSG:4326":
+                transformer = Transformer.from_crs("EPSG:4326", dataset.crs, always_xy=True)
+                shape = transform(transformer.transform, shape)
+            values, clipped_transform = mask(dataset, [mapping(shape)], crop=True)
+            profile = dataset.profile.copy()
+            profile.update(
+                height=values.shape[1],
+                width=values.shape[2],
+                transform=clipped_transform,
+                compress="deflate",
+            )
+        raster_out.parent.mkdir(parents=True, exist_ok=True)
+        with rasterio.open(raster_out, "w", **profile) as destination:
+            destination.write(values)
+        resolution_m = 1_000 if "1km" in source.name.lower() else 100
+        metadata = {
+            "provider": "WorldPop",
+            "dataset": f"India 2026 constrained population ({resolution_m} m), R2025A v1",
+            "resolution_m": resolution_m,
+            "license": "CC BY 4.0",
+            "source_path": str(source),
+        }
+        (raster_out.parent / "population_metadata.json").write_text(
+            json.dumps(metadata, indent=2), encoding="utf-8"
+        )
+        _refresh_population_outputs(event, study, raster_out)
+        print(f"[env] population.tif — WorldPop clip → {raster_out}")
         return
     if config.population_provider != "canada_census":
         log.warning(
@@ -601,8 +661,65 @@ def _prebuild_population(event, study) -> None:
         return
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    population.to_file(out_path, layer="population", driver="GPKG")
-    print(f"[env] population.gpkg — {len(population)} areas → {out_path}")
+    population.to_file(vector_out, layer="population", driver="GPKG")
+    print(f"[env] population.gpkg — {len(population)} areas → {vector_out}")
+
+
+def _download_default_worldpop(destination: Path) -> None:
+    """Provision the compact official India grid without sharing event geometry."""
+    enabled = os.getenv("WORLDPOP_AUTO_DOWNLOAD", "1").strip().lower()
+    if enabled not in {"1", "true", "yes", "on"}:
+        return
+
+    import requests
+
+    partial = destination.with_suffix(destination.suffix + ".part")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        log.info("[env] downloading WorldPop India 1 km population grid")
+        with requests.get(_WORLDPOP_1KM_URL, stream=True, timeout=(15, 180)) as response:
+            response.raise_for_status()
+            with partial.open("wb") as output:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        output.write(chunk)
+        partial.replace(destination)
+        log.info("[env] WorldPop population grid ready: %s", destination)
+    except Exception as exc:
+        partial.unlink(missing_ok=True)
+        log.warning("[env] WorldPop population download failed: %s", exc)
+
+
+def _refresh_population_outputs(event, study, population_path: Path) -> None:
+    """Refresh existing timestep exposure JSON after a population cache appears."""
+    import json
+    from pipeline.event_config import get_event_config
+    from pipeline.spatial.spatial_helpers import load_geom, population_counts
+
+    config = get_event_config(event)
+    refreshed = 0
+    for timestep_dir in sorted((study.project_dir / "timesteps").glob("*")):
+        spatial_dir = timestep_dir / "spatial_analysis" / "ML"
+        if not spatial_dir.exists():
+            continue
+        prediction_dir = timestep_dir / "prediction" / "ML"
+        risk = {
+            horizon: load_geom(prediction_dir / f"risk_zones_{horizon}h.geojson")
+            for horizon in (3, 6, 12)
+        }
+        counts = population_counts(
+            population_path,
+            load_geom(timestep_dir / "perimeter" / "perimeter.geojson"),
+            risk,
+            event.year,
+            analysis_mode=config.analysis_mode,
+            hotspot_geom=load_geom(timestep_dir / "hotspot" / "hotspots.geojson"),
+        )
+        (spatial_dir / "population.json").write_text(
+            json.dumps(counts, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        refreshed += 1
+    log.info("[env] event %d refreshed %d population artifacts", event.id, refreshed)
 
 
 def _ensure_models() -> None:
