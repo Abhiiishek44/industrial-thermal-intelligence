@@ -217,6 +217,22 @@ Add only the settings needed for the functionality you want:
 - **Seeded administrator:** set `ADMIN_USERNAME` and a non-empty
   `ADMIN_PASSWORD`.
 
+### Deploy on Railway with Docker
+
+Railway builds the root `Dockerfile`. Deploy the application as one service,
+add a PostGIS service, and attach persistent storage at `/app/data`. Railway
+provides the public HTTPS domain, so the production Caddy container is not used.
+
+See the complete [Railway Docker deployment guide](docs/RAILWAY_DEPLOYMENT.md).
+
+When `FIRMS_API_KEY` and `THERMAL_AUTO_REFRESH=1` are configured, the backend
+starts a near-real-time refresh after initial preparation and repeats it every
+`THERMAL_REFRESH_INTERVAL_HOURS` (four hours by default). Each successful cycle
+archives new daily observations, rebuilds enrichment/persistence/classification
+artifacts and advances the monitoring timeline. The browser checks lightweight
+refresh metadata every five minutes and reloads map layers only when the latest
+satellite observation changes.
+
 ## API
 
 The dashboard is served at `/demo`. Primary API areas are:
