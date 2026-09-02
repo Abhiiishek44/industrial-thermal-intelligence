@@ -173,7 +173,7 @@ def _sweep_desynced_timesteps(app):
             print("=== [sweep] All timesteps consistent ===")
 
 
-if __name__ == '__main__':
+if __name__ == '__main__':  
     import threading
     from pipeline.env import prepare_all_events
     from pipeline.check import run_checks

@@ -388,6 +388,15 @@ def build_all_predictions(event_id: int):
 
 # ── Chat ──────────────────────────────────────────────────────────────────────
 
+def _should_apply_chat_quota(payload: dict) -> bool:
+    """Return whether this authenticated identity uses the persisted chat quota."""
+    return (
+        not payload.get("is_admin", False)
+        and not payload.get("is_demo", False)
+        and payload.get("user_id") is not None
+    )
+
+
 @timesteps_bp.route("/events/<int:event_id>/chat", methods=["POST"])
 @token_required
 def chat(event_id: int):
@@ -399,15 +408,16 @@ def chat(event_id: int):
     if not message:
         return jsonify({"error": "message required"}), 400
 
-    payload  = request.current_user or {}
-    user_id  = payload.get("user_id")
-    is_admin = payload.get("is_admin", False)
-    if not is_admin and user_id is not None:
+    payload = request.current_user or {}
+    # Demo access uses a synthetic identity (id=0), so it has no User row.
+    # Only persisted, non-admin accounts participate in the database-backed
+    # daily chat quota.
+    if _should_apply_chat_quota(payload):
         from db.connection import db
-        from db.models import User
-        u = User.query.get(user_id)
-        if u is None:
-            return jsonify({"error": "User not found."}), 401
+        # token_required has already resolved and validated this database row.
+        # Reuse it so auth and quota enforcement cannot disagree about which
+        # user is making the request.
+        u = request.auth_user
         today = date.today()
         if u.chat_count_date != today:
             u.chat_count_date = today

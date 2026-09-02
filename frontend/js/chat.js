@@ -1031,11 +1031,6 @@
     const msg   = input.value.trim();
     if (!msg) return;
     input.value = '';
-    if (!_isAdmin) {
-      _chatCount++;
-      _applyChatLock();
-    }
-
     _appendMsg('user', msg);
     _history.push({ role: 'user', content: msg });
 
@@ -1059,6 +1054,10 @@
       function() {
         aDiv.innerHTML = _renderMsg(full);
         _history.push({ role: 'assistant', content: full });
+        if (!_isAdmin) {
+          _chatCount++;
+          _applyChatLock();
+        }
         _streaming = false;
         document.getElementById('chat-send-btn').style.opacity = '';
         document.getElementById('chat-messages').scrollTop = 999999;

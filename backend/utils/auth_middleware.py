@@ -72,6 +72,7 @@ def _authenticated(admin_only: bool = False):
                     "user_id": demo_user.id,
                     "username": demo_user.username,
                     "is_admin": False,
+                    "is_demo": True,
                 }
                 request.auth_user = demo_user
                 request._jwt_user_id = demo_user.id
@@ -86,6 +87,7 @@ def _authenticated(admin_only: bool = False):
                 "user_id": user.id,
                 "username": user.username,
                 "is_admin": bool(user.is_admin),
+                "is_demo": False,
             }
             request.auth_user = user
             request._jwt_user_id = user.id
