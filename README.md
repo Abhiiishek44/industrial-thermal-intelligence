@@ -306,3 +306,4 @@ situation reports. This workflow is not the primary public monitoring product.
 - External services, including FIRMS, CDS, Anthropic, and Gemini, enable only
   their respective optional capabilities; they are not all required to explore
   the core dashboard.
+  
