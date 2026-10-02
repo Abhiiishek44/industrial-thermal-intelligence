@@ -1,0 +1,30 @@
+--progress is a global compose flag, better use `docker compose --progress xx build ...
+ Image docker-backend Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 574B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 1.11kB done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/python:3.11-slim-bookworm
+#3 DONE 0.0s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 357B done
+#4 DONE 0.0s
+
+#5 [1/8] FROM docker.io/library/python:3.11-slim-bookworm@sha256:2333bd330d12de02514770b3585cad313644316047cdee24a7acfdece6de6efb
+#5 resolve docker.io/library/python:3.11-slim-bookworm@sha256:2333bd330d12de02514770b3585cad313644316047cdee24a7acfdece6de6efb done
+#5 DONE 0.0s
+
+#6 [2/8] WORKDIR /app
+#6 CACHED
+
+#7 [internal] load build context
+#7 transferring context: 6.64kB done
+#7 DONE 0.0s
+
+#8 [3/8] RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources     && apt-get update -o Acquire::Retries=3     && apt-get install -y --no-install-recommends     libpq-dev     gcc     g++     git     gdal-bin     libgdal-dev     libproj-dev     proj-data     proj-bin     libgeos-dev     libspatialindex-dev     && rm -rf /var/lib/apt/lists/*
+#8 18.54 Ign:1 https://deb.debian.org/debian bookworm InRelease
