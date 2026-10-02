@@ -1,9 +1,13 @@
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
 # Native dependencies used by PostgreSQL/PostGIS and the geospatial Python stack.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update \
+        -o Acquire::ForceIPv4=true \
+        -o Acquire::Retries=5 \
+        -o Acquire::http::Timeout=30 \
+    && apt-get install -y --no-install-recommends \
     libpq-dev \
     gcc \
     g++ \

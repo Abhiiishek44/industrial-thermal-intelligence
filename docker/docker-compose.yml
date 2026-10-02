@@ -19,6 +19,8 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+      # Use the host network while resolving/downloading Debian build packages.
+      network: host
     restart: unless-stopped
     env_file:
       - ../.env

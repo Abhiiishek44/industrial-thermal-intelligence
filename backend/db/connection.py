@@ -10,7 +10,7 @@ db = SQLAlchemy()
 
 def get_db_uri():
     return (
-        f"postgresql://{os.getenv('DB_USER', 'postgres')}"
+        f"postgresql+psycopg2://{os.getenv('DB_USER', 'postgres')}"
         f":{os.getenv('DB_PASSWORD', 'password')}"
         f"@{os.getenv('DB_HOST', 'localhost')}"
         f":{os.getenv('DB_PORT', '5432')}"
