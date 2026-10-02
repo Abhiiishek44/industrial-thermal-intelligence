@@ -9,6 +9,20 @@ db = SQLAlchemy()
 
 
 def get_db_uri():
+    database_url = os.getenv('DATABASE_URL', '').strip()
+    if database_url:
+        # SQLAlchemy 2.1 resolves a bare PostgreSQL URL to psycopg (v3), while
+        # this project intentionally installs and imports psycopg2.
+        if database_url.startswith('postgresql://'):
+            return database_url.replace(
+                'postgresql://', 'postgresql+psycopg2://', 1
+            )
+        if database_url.startswith('postgres://'):
+            return database_url.replace(
+                'postgres://', 'postgresql+psycopg2://', 1
+            )
+        return database_url
+
     return (
         f"postgresql+psycopg2://{os.getenv('DB_USER', 'postgres')}"
         f":{os.getenv('DB_PASSWORD', 'password')}"
@@ -25,13 +39,26 @@ def ensure_db():
     This function runs before create_all() to guarantee the database exists
     and PostGIS is enabled, so the app can start without any manual setup.
     """
-    db_name = os.getenv('DB_NAME', 'wildfire_db')
-    conn_args = dict(
-        host=os.getenv('DB_HOST', 'localhost'),
-        port=os.getenv('DB_PORT', '5432'),
-        user=os.getenv('DB_USER', 'postgres'),
-        password=os.getenv('DB_PASSWORD', ''),
-    )
+    database_url = os.getenv('DATABASE_URL', '').strip()
+    if database_url:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(database_url)
+        db_name = parsed.path.lstrip('/')
+        conn_args = dict(
+            host=parsed.hostname,
+            port=parsed.port or 5432,
+            user=parsed.username,
+            password=parsed.password,
+        )
+    else:
+        db_name = os.getenv('DB_NAME', 'wildfire_db')
+        conn_args = dict(
+            host=os.getenv('DB_HOST', 'localhost'),
+            port=os.getenv('DB_PORT', '5432'),
+            user=os.getenv('DB_USER', 'postgres'),
+            password=os.getenv('DB_PASSWORD', ''),
+        )
 
     # Step 1: connect to the default 'postgres' DB to create our database
     conn = psycopg2.connect(**conn_args, dbname='postgres')
