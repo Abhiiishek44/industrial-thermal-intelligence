@@ -56,6 +56,34 @@
     low: '#16a34a',
   };
 
+  function industrialFacilityStyle(industryType) {
+    const type = String(industryType || '').toLowerCase();
+    if (type.includes('power_plant') || type.includes('power_generator')) {
+      return { category: 'Power generation', color: '#9a3412', fillColor: '#f97316', radius: 5.5 };
+    }
+    if (type.includes('works') || type.includes('smelt') || type.includes('steel') || type.includes('brick')) {
+      return { category: 'Industrial works', color: '#075985', fillColor: '#22d3ee', radius: 6 };
+    }
+    if (type.includes('mining') || type.includes('quarry')) {
+      return { category: 'Mining', color: '#78350f', fillColor: '#a16207', radius: 5 };
+    }
+    if (type.includes('flare') || type.includes('gasometer') || type.includes('storage')) {
+      return { category: 'Gas / storage', color: '#6b21a8', fillColor: '#c084fc', radius: 5 };
+    }
+    if (type.includes('substation')) {
+      return { category: 'Power infrastructure', color: '#1e3a8a', fillColor: '#60a5fa', radius: 4 };
+    }
+    if (type.includes('cooling')) {
+      return { category: 'Cooling infrastructure', color: '#0f766e', fillColor: '#5eead4', radius: 3.5 };
+    }
+    return { category: 'Industrial facility', color: '#374151', fillColor: '#9ca3af', radius: 4.5 };
+  }
+
+  function facilityTypeLabel(value) {
+    return String(value || 'industrial facility').replaceAll('_', ' ')
+      .replace(/\b\w/g, function(letter) { return letter.toUpperCase(); });
+  }
+
   function safeHtml(value) {
     return String(value == null ? '' : value)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -81,6 +109,11 @@
         : '. The Isolation Forest did not independently agree with this event.';
     }
     const contextRows = [
+      ['Nearest mapped industry', context.nearest_industry_name],
+      ['Mapped industry type', context.nearest_industry_type
+        ? facilityTypeLabel(context.nearest_industry_type) : null],
+      ['Distance to mapped industry', context.distance_to_nearest_industry_m != null
+        ? metric(context.distance_to_nearest_industry_m, 0, ' m') : null],
       ['Built-up industrial land cover', context.builtup_fraction_1km_mean != null
         ? metric(Number(context.builtup_fraction_1km_mean) * 100, 1, '%') : null],
       ['Nearest industrial facility', context.distance_to_industrial_km_mean != null
@@ -98,7 +131,10 @@
     };
     panel.innerHTML =
       '<div class="thermal-detail-header"><div><small>Thermal anomaly candidate</small><h3>' +
-        safeHtml(event.source_event_id) + '</h3></div><button type="button" aria-label="Close event details">×</button></div>' +
+        safeHtml(event.source_event_id) + '</h3></div>' +
+        '<button type="button" class="thermal-detail-close" aria-label="Close thermal anomaly details" title="Close">' +
+          '<span>Close</span><b aria-hidden="true">×</b>' +
+        '</button></div>' +
       '<div class="thermal-detail-summary risk-border-' + safeHtml(event.final_risk_level) + '">' +
         '<span>Abnormal thermal signature</span><strong>' + safeHtml(event.final_risk_level || 'Unknown') +
         ' risk · ' + safeHtml(event.final_confidence || 'Unknown') + ' confidence</strong></div>' +
@@ -130,8 +166,9 @@
         }).join('') + '</div>' : '<p>No mapped facility context is available for this source.</p>') +
         '<small>Facility proximity and land cover are contextual evidence, not a verified source classification.</small></section>';
     panel.classList.remove('hidden');
-    panel.querySelector('.thermal-detail-header button').addEventListener('click', function() {
+    panel.querySelector('.thermal-detail-close').addEventListener('click', function() {
       panel.classList.add('hidden');
+      panel.innerHTML = '';
     });
   }
 
@@ -405,7 +442,7 @@
         'Perimeter':           this._layers.perimeter,
         'Roads':               this._layers.roads,
         'Hotspots':            this._layers.hotspots,
-        'Mapped power plants': this._layers.facilities,
+        'Mapped industrial facilities': this._layers.facilities,
         'Wind Field':          this._windFieldGroup,
       }, { position: 'topright', collapsed: true }).addTo(this.map);
     }
@@ -595,6 +632,7 @@
           const p = f.properties || {};
           marker.bindPopup(
             '<div class="thermal-risk-popup">' +
+              (p.is_live ? '<div class="thermal-popup-kicker" style="color:#0891b2;font-weight:700">LIVE · ' + safeHtml(p.model_name || 'Isolation Forest') + '</div>' : '') +
               '<div class="thermal-popup-kicker">Source</div><b>' + safeHtml(p.thermal_source_id || 'Unknown') + '</b>' +
               '<div class="thermal-popup-kicker">Assessment</div><b>Abnormal thermal signature</b>' +
               '<div class="thermal-popup-grid"><span>Risk level</span><b class="risk-' + safeHtml(p.final_risk_level) + '">' + safeHtml(p.final_risk_level || 'Unknown') + '</b>' +
@@ -602,8 +640,11 @@
               '<span>Peak FRP</span><b>' + metric(p.max_frp, 1, ' MW') + '</b>' +
               '<span>30-day baseline</span><b>' + metric(p.source_baseline_frp, 1, ' MW') + '</b>' +
               '<span>FRP increase</span><b>' + metric(p.max_frp_ratio, 1, '×') + '</b>' +
+              (p.nearest_industry_name ? '<span>Nearest industry</span><b>' + safeHtml(p.nearest_industry_name) +
+                (p.distance_to_nearest_industry_m != null ? ' · ' + metric(p.distance_to_nearest_industry_m, 0, ' m') : '') + '</b>' : '') +
               '<span>Detections</span><b>' + safeHtml(p.detection_count == null ? 'Unavailable' : p.detection_count) + '</b>' +
-              '<span>IF agreement</span><b>' + (p.iforest_agreement ? 'Yes' : 'No') + '</b>' +
+              '<span>IF agreement</span><b>' + (p.iforest_evaluated === false ? 'Not eligible' : (p.iforest_agreement ? 'Yes' : 'No')) + '</b>' +
+              (p.latest_observation_at ? '<span>Latest observation</span><b>' + safeHtml(new Date(p.latest_observation_at).toLocaleString()) + '</b>' : '') +
               '<span>Risk prioritization score</span><b>' + metric(p.final_risk_score, 3) + '</b></div>' +
               '<button type="button" class="thermal-detail-open">View explainability</button>' +
             '</div>',
@@ -748,33 +789,34 @@
       this._layers.facilities.clearLayers();
       if (!geojson?.features?.length) return;
       const renderer = this._hotspotCanvas;
-      const plantName = /power plant|thermal power|\bTPS\b|\bSTPS\b|\bUMPP\b|super thermal/i;
-      const features = geojson.features.filter(function(feature) {
-        const p = feature.properties || {};
-        return p.industry_type === 'power_plant' ||
-          p.industry_type === 'power_generator' ||
-          plantName.test(String(p.name || ''));
-      });
-      L.geoJSON({ type: 'FeatureCollection', features: features }, {
+      // Render every mapped OSM industrial asset. Previous exact-type checks
+      // excluded real values such as power_generator_coal and works.
+      L.geoJSON({ type: 'FeatureCollection', features: geojson.features }, {
         pointToLayer(f, latlng) {
-          const generator = f.properties?.industry_type === 'power_generator';
+          const style = industrialFacilityStyle(f.properties?.industry_type);
           return L.circleMarker(latlng, {
-            radius: generator ? 4 : 6,
-            color: generator ? '#dc2626' : '#075985',
-            fillColor: generator ? '#ef4444' : '#22d3ee',
-            fillOpacity: generator ? .24 : .9,
-            opacity: .95, weight: generator ? 2 : 1.5, renderer: renderer,
+            radius: style.radius,
+            color: style.color,
+            fillColor: style.fillColor,
+            fillOpacity: .86,
+            opacity: .96, weight: 1.5, renderer: renderer,
           });
         },
         onEachFeature(f, layer) {
           const p = f.properties || {};
-          const generator = p.industry_type === 'power_generator';
+          const style = industrialFacilityStyle(p.industry_type);
+          const unnamed = !p.name || /^unnamed industrial facility$/i.test(p.name);
+          const output = p.electricity_output ? '<br>Output: ' + safeHtml(p.electricity_output) : '';
           layer.bindPopup(
-            '<b>' + (p.name || (generator ? 'Generator unit' : 'Power plant')) + '</b><br>' +
-            (generator ? 'Generator unit' : 'Power plant') +
-              ' — not a thermal detection<br>' +
-            'Fuel: ' + (p.power_source || 'Unknown') + '<br>' +
-            'Operator: ' + (p.operator || 'Unknown')
+            '<div class="thermal-popup-kicker">Mapped industry point</div>' +
+            '<b>' + safeHtml(unnamed ? style.category : p.name) + '</b><br>' +
+            safeHtml(facilityTypeLabel(p.industry_type)) + '<br>' +
+            'Category: ' + safeHtml(style.category) + '<br>' +
+            'Fuel / source: ' + safeHtml(p.power_source || 'Not specified') + output + '<br>' +
+            'Operator: ' + safeHtml(p.operator || 'Not specified') + '<br>' +
+            '<small>Source: ' + safeHtml(p.source || 'OpenStreetMap') +
+              (p.osm_id ? ' · OSM ' + safeHtml(p.osm_id) : '') +
+              ' · contextual asset, not a thermal detection</small>'
           );
         },
       }).addTo(this._layers.facilities);

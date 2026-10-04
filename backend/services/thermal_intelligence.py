@@ -15,6 +15,8 @@ from typing import Any, Iterable
 import numpy as np
 import pandas as pd
 
+from services.live_thermal_inference import live_thermal_inference
+
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 LOCAL_EVENTS_PATH = PROJECT_DIR / "data" / "processed" / "final_fused_events.parquet"
@@ -30,6 +32,7 @@ MAP_FIELDS = (
     "latitude",
     "longitude",
     "region_name",
+    "event_start",
     "final_risk_level",
     "final_confidence",
     "final_risk_score",
@@ -37,7 +40,15 @@ MAP_FIELDS = (
     "source_baseline_frp",
     "max_frp_ratio",
     "iforest_agreement",
+    "iforest_evaluated",
     "detection_count",
+    "data_mode",
+    "is_live",
+    "latest_observation_at",
+    "model_name",
+    "nearest_industry_name",
+    "nearest_industry_type",
+    "distance_to_nearest_industry_m",
 )
 
 
@@ -111,6 +122,8 @@ class ThermalIntelligenceService:
                     frame["_event_year"] = pd.to_datetime(
                         frame["event_start"], utc=True, errors="coerce"
                     ).dt.year
+                    frame["data_mode"] = "historical"
+                    frame["is_live"] = False
                     self._events = frame
         return self._events
 
@@ -141,8 +154,24 @@ class ThermalIntelligenceService:
         region: str | None = None,
         year: int | None = None,
         iforest_agreement: bool | None = None,
+        data_mode: str | None = None,
     ) -> pd.DataFrame:
-        frame = self.events
+        mode = str(data_mode or "all").strip().lower()
+        frames = []
+        if mode not in {"live", "historical"}:
+            mode = "all"
+        if mode in {"all", "historical"}:
+            frames.append(self.events)
+        if mode in {"all", "live"}:
+            live = live_thermal_inference.all_events(region)
+            if not live.empty:
+                live = live.copy()
+                live["_region_key"] = live["region_name"].map(_normalise_region)
+                live["_event_year"] = pd.to_datetime(
+                    live["event_start"], utc=True, errors="coerce"
+                ).dt.year
+                frames.append(live)
+        frame = pd.concat(frames, ignore_index=True, sort=False) if frames else self.events.iloc[0:0]
         mask = pd.Series(True, index=frame.index)
         if risk_levels:
             wanted = {str(level).strip().lower() for level in risk_levels if str(level).strip()}
@@ -164,8 +193,11 @@ class ThermalIntelligenceService:
         )
         return [json_safe(record) for record in selected.to_dict("records")]
 
-    def stats(self, *, region: str | None = None, year: int | None = None) -> dict:
-        frame = self._filter_events(region=region, year=year)
+    def stats(
+        self, *, region: str | None = None, year: int | None = None,
+        data_mode: str | None = None,
+    ) -> dict:
+        frame = self._filter_events(region=region, year=year, data_mode=data_mode)
         levels = frame["final_risk_level"].astype(str).str.lower().value_counts()
         regions = frame["region_name"].astype(str).value_counts().sort_index()
         high_confidence = (
@@ -183,6 +215,16 @@ class ThermalIntelligenceService:
             "iforest_agreement_count": int(
                 frame["iforest_agreement"].fillna(False).astype(bool).sum()
             ),
+            "live_events": int(frame.get("is_live", False).fillna(False).astype(bool).sum()),
+            "latest_live_observation": (
+                pd.to_datetime(
+                    frame.loc[frame.get("is_live", False).fillna(False).astype(bool), "latest_observation_at"],
+                    utc=True, errors="coerce",
+                ).max()
+                if "latest_observation_at" in frame else None
+            ),
+            "model_name": "Isolation Forest",
+            "model_training_period": "2021-01-01 to 2024-12-31",
             "counts_per_region": {str(key): int(value) for key, value in regions.items()},
         })
 
@@ -213,20 +255,34 @@ class ThermalIntelligenceService:
         }
 
     def event_detail(self, source_event_id: str) -> dict | None:
-        matches = self.events[
-            self.events["source_event_id"].astype(str).eq(str(source_event_id))
-        ]
+        frame = self.events
+        if str(source_event_id).startswith("live_"):
+            matches = live_thermal_inference.find_event(source_event_id)
+        else:
+            matches = frame[frame["source_event_id"].astype(str).eq(str(source_event_id))]
         if matches.empty:
             return None
         event = self._records(matches.head(1))[0]
         # Source fields are contextual evidence, not a verified source label.
-        _ = self.sources
-        source = (self._source_lookup or {}).get(str(event.get("thermal_source_id")))
+        source = None
+        if not event.get("is_live"):
+            _ = self.sources
+            source = (self._source_lookup or {}).get(str(event.get("thermal_source_id")))
         event["assessment"] = "Abnormal thermal signature"
         event["supporting_context"] = json_safe({
             key: value for key, value in (source or {}).items()
             if key not in {"_region_key", "thermal_source_id", "region_name"}
         })
+        if event.get("is_live"):
+            event["supporting_context"] = {
+                "data_mode": "live",
+                "model_name": event.get("model_name"),
+                "model_training_period": event.get("model_training_period"),
+                "latest_observation_at": event.get("latest_observation_at"),
+                "nearest_industry_name": event.get("nearest_industry_name"),
+                "nearest_industry_type": event.get("nearest_industry_type"),
+                "distance_to_nearest_industry_m": event.get("distance_to_nearest_industry_m"),
+            }
         return event
 
     def list_sources(self, *, region: str | None, limit: int, offset: int = 0) -> dict:

@@ -37,7 +37,7 @@
       replay: 'Observation Replay',
       persistent: 'Persistent Sources',
       risk: 'Risk Events',
-      anomalies: 'Thermal Anomalies',
+      anomalies: 'Live Thermal Anomalies',
       classification: 'Legacy Classification',
     };
     const viewLabel = viewLabels[viewMode || thermal.view_mode] || 'Thermal Monitoring';
@@ -283,6 +283,7 @@
     const top = thermal.top_risk_event || {};
     const wf = weatherForecast || [];
     const facilities = industrialFacilities?.features || [];
+    const isLive = thermal.view_mode === 'anomalies';
     const agreementRate = stats.total_events
       ? Math.round((Number(stats.iforest_agreement_count || 0) / Number(stats.total_events)) * 100)
       : 0;
@@ -291,10 +292,11 @@
     };
     el.innerHTML =
       '<div class="data-card risk-overview-card">' +
-        '<div class="dash-card-title">Thermal Events</div>' +
-        '<div class="risk-primary-metric">' + vn(stats.total_events || 0) + '<small>historical events</small></div>' +
+        '<div class="dash-card-title">' + (isLive ? 'Live Thermal Anomalies' : 'Thermal Events') + '</div>' +
+        '<div class="risk-primary-metric">' + vn(stats.total_events || 0) + '<small>' + (isLive ? 'current scored events' : 'historical + live events') + '</small></div>' +
         detailRow('Critical', vn(stats.critical_events || 0)) +
         detailRow('High', vn(stats.high_events || 0)) +
+        (isLive ? detailRow('Latest observation', formatTime(stats.latest_live_observation)) : '') +
       '</div>' +
       '<div class="data-card">' +
         '<div class="dash-card-title">High Confidence Alerts</div>' +
@@ -312,7 +314,7 @@
         '<div class="dash-card-title">Model Agreement</div>' +
         '<div class="risk-primary-metric">' + vn(stats.iforest_agreement_count || 0) + '<small>Isolation Forest agreements</small></div>' +
         detailRow('Agreement share', agreementRate + '%') +
-        detailRow('Top event agreement', top.iforest_agreement ? 'Yes' : 'No') +
+        detailRow('Top event agreement', top.iforest_evaluated === false ? 'Not eligible' : (top.iforest_agreement ? 'Yes' : 'No')) +
       '</div>' +
       '<div class="data-card">' +
         '<div class="dash-card-title">Persistence</div>' +

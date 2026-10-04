@@ -50,6 +50,7 @@ def _filters(default_risk: str | None = None):
         "region": request.args.get("region"),
         "year": _optional_year(),
         "iforest_agreement": _optional_bool("iforest_agreement"),
+        "data_mode": request.args.get("data_mode"),
     }
 
 
@@ -66,7 +67,8 @@ def _artifact_invalid(error):
 @thermal_bp.get("/stats")
 def get_stats():
     return jsonify(thermal_intelligence.stats(
-        region=request.args.get("region"), year=_optional_year()
+        region=request.args.get("region"), year=_optional_year(),
+        data_mode=request.args.get("data_mode"),
     ))
 
 

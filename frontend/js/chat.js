@@ -1025,7 +1025,7 @@
 
   function _clearChat() {
     const msgs = document.getElementById('chat-messages');
-    if (msgs) msgs.innerHTML = '<div class="chat-welcome"><span class="chat-welcome-mark assistant-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 5h14v11H9l-4 3z"/><path d="M8 9h8M8 12h5"/></svg></span>' +
+    if (msgs) msgs.innerHTML = '<div class="chat-welcome"><span class="chat-welcome-mark assistant-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m11.5 3 2 5.5 5.5 2-5.5 2-2 5.5-2-5.5-5.5-2 5.5-2 2-5.5Z"/><path d="M18.5 3v3M17 4.5h3M5.5 17v3M4 18.5h3"/></svg></span>' +
       '<strong>How can I help?</strong><p>Ask about the current observation, evidence, exposure, or recommended actions.</p></div>';
   }
 

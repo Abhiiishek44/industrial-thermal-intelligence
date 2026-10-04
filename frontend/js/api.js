@@ -130,10 +130,11 @@
       var query = '?days=' + encodeURIComponent(days) + '&end=' + encodeURIComponent(end);
       return apiFetch('/api/events/' + eid + '/thermal/classifications' + query);
     },
-    async getThermalStats(region, year) {
+    async getThermalStats(region, year, dataMode) {
       var params = new URLSearchParams();
       if (region) params.set('region', region);
       if (year) params.set('year', year);
+      if (dataMode) params.set('data_mode', dataMode);
       return apiFetch('/api/v1/thermal/stats' + (params.toString() ? '?' + params : ''));
     },
     async getThermalEvents(filters) {

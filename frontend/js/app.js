@@ -382,7 +382,10 @@
         '<div class="leg-row"><span class="leg-swatch" style="background:#f97316;opacity:.9"></span>High risk</div>' +
         '<div class="leg-row"><span class="leg-swatch" style="background:#eab308;opacity:.9"></span>Moderate risk</div>' +
         '<div class="leg-row"><span class="leg-swatch" style="background:#16a34a;opacity:.9"></span>Low risk</div>' +
-        '<div class="leg-row"><span class="leg-swatch" style="background:#22d3ee;opacity:.9;border:1px solid #075985"></span>Facility context</div>';
+        '<div class="leg-row"><span class="leg-swatch" style="background:#22d3ee;opacity:.9;border:1px solid #075985"></span>Industrial works</div>' +
+        '<div class="leg-row"><span class="leg-swatch" style="background:#f97316;opacity:.9;border:1px solid #9a3412"></span>Power generation</div>' +
+        '<div class="leg-row"><span class="leg-swatch" style="background:#a16207;opacity:.9;border:1px solid #78350f"></span>Mining</div>' +
+        '<div class="leg-row"><span class="leg-swatch" style="background:#60a5fa;opacity:.9;border:1px solid #1e3a8a"></span>Power infrastructure</div>';
     } else if (mode === 'classification') {
       legend.innerHTML =
         '<div class="leg-row"><b>Legacy rule-based review</b></div>' +
@@ -416,6 +419,11 @@
       input.addEventListener('change', function() {
         if (!input.checked) return;
         _thermalViewMode = input.value;
+        if (_thermalViewMode === 'anomalies') {
+          _thermalRiskFilter = 'all';
+          var riskFilter = document.getElementById('thermal-risk-filter');
+          if (riskFilter) riskFilter.value = 'all';
+        }
         _renderThermalLegend(_thermalViewMode);
         if (_currentTsIndex >= 0 && _timestepsDone[_currentTsIndex]) {
           selectTimestep(_timestepsDone[_currentTsIndex], false);
@@ -440,6 +448,10 @@
     if (_thermalRiskFilter === 'moderate_plus') return 'moderate,high,critical';
     if (_thermalRiskFilter === 'all') return 'low,moderate,high,critical';
     return 'high,critical';
+  }
+
+  function _thermalDataMode() {
+    return _thermalViewMode === 'anomalies' ? 'live' : undefined;
   }
 
   function _renderThermalRefreshStatus(status) {
@@ -635,9 +647,10 @@
       risk_level: _riskLevelsForFilter(),
       limit: _thermalRiskFilter === 'all' ? 1500 : 1000,
     };
+    if (_thermalDataMode()) filter.data_mode = _thermalDataMode();
     var results = await Promise.allSettled([
       window.API.getThermalMap(filter),
-      window.API.getThermalStats(currentEvent.region_id),
+      window.API.getThermalStats(currentEvent.region_id, null, _thermalDataMode()),
       window.API.getThermalEvents(Object.assign({}, filter, { limit: 1 })),
       window.API.getIndustrialFacilities(currentEvent.id),
     ]);
@@ -1119,6 +1132,7 @@
             region: currentEvent.region_id,
             risk_level: _riskLevelsForFilter(),
             limit: _thermalRiskFilter === 'all' ? 1500 : 1000,
+            data_mode: _thermalDataMode() || '',
           })
         : _thermalViewMode === 'persistent'
         ? window.API.getPersistentThermalSources(eid, 30, ts.slot_time)
@@ -1185,13 +1199,14 @@
       hotspotRequest,
       industrialFacilitiesRequest,
       currentEvent.analysis_mode === 'thermal_monitoring'
-        ? window.API.getThermalStats(currentEvent.region_id)
+        ? window.API.getThermalStats(currentEvent.region_id, null, _thermalDataMode())
         : Promise.resolve(null),
       currentEvent.analysis_mode === 'thermal_monitoring'
         ? window.API.getThermalEvents({
             region: currentEvent.region_id,
             risk_level: _riskLevelsForFilter(),
             limit: 1,
+            data_mode: _thermalDataMode() || '',
           })
         : Promise.resolve(null),
     ]).then(function(r) {
