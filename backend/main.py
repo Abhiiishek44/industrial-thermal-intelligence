@@ -30,6 +30,7 @@ def create_app():
     from api.config    import config_bp
     from api.regions   import regions_bp
     from api.crowd     import crowd_bp
+    from api.thermal   import thermal_bp
 
     app.register_blueprint(auth_bp,      url_prefix='/auth')
     app.register_blueprint(events_bp,    url_prefix='/api/events')
@@ -38,6 +39,7 @@ def create_app():
     app.register_blueprint(config_bp,    url_prefix='/api/config')
     app.register_blueprint(regions_bp,   url_prefix='/api/regions')
     app.register_blueprint(crowd_bp,     url_prefix='/api/events')
+    app.register_blueprint(thermal_bp,   url_prefix='/api/v1/thermal')
 
     # ── Frontend routes ───────────────────────────────────────────────────────
     from flask import redirect, request, send_from_directory
@@ -187,15 +189,24 @@ if __name__ == '__main__':
 
     # Pipeline runs in background — Flask starts immediately
     def _run_pipeline():
-        print("=== [pipeline] Preparing environment ===")
-        prepare_all_events(app)
+        run_offline_pipeline = os.getenv(
+            "RUN_OFFLINE_PIPELINE_ON_STARTUP", "0"
+        ).strip().lower() in {"1", "true", "yes"}
+        if run_offline_pipeline:
+            print("=== [pipeline] Preparing legacy environment ===")
+            prepare_all_events(app)
 
-        print("=== [pipeline] Sweeping desynced timesteps ===")
-        _sweep_desynced_timesteps(app)
+            print("=== [pipeline] Sweeping desynced timesteps ===")
+            _sweep_desynced_timesteps(app)
 
-        print("=== [pipeline] Running checks ===")
-        run_checks(app)
-        print("=== [pipeline] Complete — timestep slots ready ===")
+            print("=== [pipeline] Running checks ===")
+            run_checks(app)
+            print("=== [pipeline] Complete — timestep slots ready ===")
+        else:
+            print(
+                "=== [pipeline] Offline preprocessing disabled; "
+                "using prepared thermal intelligence artifacts ==="
+            )
 
         from pipeline.thermal.refresh import start_thermal_refresh_scheduler
         start_thermal_refresh_scheduler(app)

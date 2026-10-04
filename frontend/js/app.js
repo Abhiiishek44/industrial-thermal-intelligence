@@ -21,7 +21,8 @@
   let _isAdmin            = false;  // set after authentication
   let _syncPushInterval   = null;   // admin: pushes virtual time to server every 10s
   let _initialReplayFloor = null;   // protects the richer event-1 default from a stale saved clock
-  let _thermalViewMode    = 'classification';   // source classification is the monitoring default
+  let _thermalViewMode    = 'risk';             // anomaly/risk prioritization is the default
+  let _thermalRiskFilter  = 'high_critical';
   let _thermalRefreshPoll = null;
   let _thermalLastObservedMs = null;
   const THERMAL_STATUS_POLL_MS = 5 * 60 * 1000;
@@ -349,10 +350,10 @@
     document.getElementById('thermal-view-title')?.classList.toggle('hidden', !thermal);
     document.getElementById('thermal-view-section')?.classList.toggle('hidden', !thermal);
     if (thermal) {
-      _thermalViewMode = 'classification';
-      var defaultView = document.querySelector('input[name="thermal-view"][value="classification"]');
+      _thermalViewMode = 'risk';
+      var defaultView = document.querySelector('input[name="thermal-view"][value="risk"]');
       if (defaultView) defaultView.checked = true;
-      _renderThermalLegend('classification');
+      _renderThermalLegend('risk');
     }
 
     var dashboardTitle = document.querySelector('#bottom-header .bottom-title');
@@ -375,8 +376,16 @@
     var legend = document.getElementById('event-legend');
     if (!legend) return;
     var forest = currentEvent && currentEvent.monitoring_focus === 'forest';
-    if (mode === 'classification') {
+    if (mode === 'risk' || mode === 'anomalies') {
       legend.innerHTML =
+        '<div class="leg-row"><span class="leg-swatch" style="background:#dc2626;opacity:.9"></span>Critical risk</div>' +
+        '<div class="leg-row"><span class="leg-swatch" style="background:#f97316;opacity:.9"></span>High risk</div>' +
+        '<div class="leg-row"><span class="leg-swatch" style="background:#eab308;opacity:.9"></span>Moderate risk</div>' +
+        '<div class="leg-row"><span class="leg-swatch" style="background:#16a34a;opacity:.9"></span>Low risk</div>' +
+        '<div class="leg-row"><span class="leg-swatch" style="background:#22d3ee;opacity:.9;border:1px solid #075985"></span>Facility context</div>';
+    } else if (mode === 'classification') {
+      legend.innerHTML =
+        '<div class="leg-row"><b>Legacy rule-based review</b></div>' +
         '<div class="leg-row"><span class="leg-swatch" style="background:#ef4444;opacity:.9;border:1px solid #991b1b"></span>FIRMS observation</div>' +
         '<div class="leg-row"><span class="leg-swatch" style="background:rgba(239,68,68,.24);border:2px solid #dc2626"></span>Generator unit</div>' +
         '<div class="leg-row"><span class="leg-swatch" style="background:#22d3ee;opacity:.9;border:1px solid #075985"></span>Power plant</div>' +
@@ -410,9 +419,27 @@
         _renderThermalLegend(_thermalViewMode);
         if (_currentTsIndex >= 0 && _timestepsDone[_currentTsIndex]) {
           selectTimestep(_timestepsDone[_currentTsIndex], false);
+        } else if (_thermalViewMode === 'risk' || _thermalViewMode === 'anomalies') {
+          _loadPreparedRiskOverview();
         }
       });
     });
+    document.getElementById('thermal-risk-filter')?.addEventListener('change', function(event) {
+      _thermalRiskFilter = event.target.value;
+      if ((_thermalViewMode === 'risk' || _thermalViewMode === 'anomalies') &&
+          _currentTsIndex >= 0 && _timestepsDone[_currentTsIndex]) {
+        selectTimestep(_timestepsDone[_currentTsIndex], false);
+      } else if (_thermalViewMode === 'risk' || _thermalViewMode === 'anomalies') {
+        _loadPreparedRiskOverview();
+      }
+    });
+  }
+
+  function _riskLevelsForFilter() {
+    if (_thermalRiskFilter === 'critical') return 'critical';
+    if (_thermalRiskFilter === 'moderate_plus') return 'moderate,high,critical';
+    if (_thermalRiskFilter === 'all') return 'low,moderate,high,critical';
+    return 'high,critical';
   }
 
   function _renderThermalRefreshStatus(status) {
@@ -578,6 +605,57 @@
     return fireCtx;
   }
 
+  function _mergeThermalRisk(fireCtx, payload, stats, topPayload) {
+    var context = fireCtx || { analysis_mode: 'thermal_monitoring', fire: {}, thermal: {} };
+    var events = payload && Array.isArray(payload.events) ? payload.events : [];
+    var top = topPayload && Array.isArray(topPayload.events) && topPayload.events.length
+      ? topPayload.events[0]
+      : (events.length ? events[0] : null);
+    context.thermal = Object.assign({}, context.thermal || {}, {
+      view_mode: _thermalViewMode,
+      risk_filter: _thermalRiskFilter,
+      risk_stats: stats || {},
+      risk_events_visible: events.length,
+      risk_events_total: payload && payload.total != null ? payload.total : events.length,
+      top_risk_event: top,
+      final_risk_level_counts: stats ? {
+        critical: stats.critical_events || 0,
+        high: stats.high_events || 0,
+        moderate: stats.moderate_events || 0,
+        low: stats.low_events || 0,
+      } : {},
+    });
+    return context;
+  }
+
+  async function _loadPreparedRiskOverview() {
+    if (!currentEvent || currentEvent.analysis_mode !== 'thermal_monitoring') return;
+    var filter = {
+      region: currentEvent.region_id,
+      risk_level: _riskLevelsForFilter(),
+      limit: _thermalRiskFilter === 'all' ? 1500 : 1000,
+    };
+    var results = await Promise.allSettled([
+      window.API.getThermalMap(filter),
+      window.API.getThermalStats(currentEvent.region_id),
+      window.API.getThermalEvents(Object.assign({}, filter, { limit: 1 })),
+      window.API.getIndustrialFacilities(currentEvent.id),
+    ]);
+    var mapPayload = results[0].status === 'fulfilled'
+      ? results[0].value
+      : { events: [], error: 'Risk-event data could not be loaded. Please retry.' };
+    var stats = results[1].status === 'fulfilled' ? results[1].value : {};
+    var top = results[2].status === 'fulfilled' ? results[2].value : null;
+    var facilities = results[3].status === 'fulfilled'
+      ? results[3].value
+      : { type: 'FeatureCollection', features: [] };
+    eventMap.renderThermalRiskEvents(mapPayload);
+    eventMap.renderIndustrialFacilities(facilities);
+    var context = _mergeThermalRisk(null, mapPayload, stats, top);
+    window.Dashboard.renderDashboard(null, context, [], facilities);
+    window.Dashboard.updateHud(context, currentEvent, _thermalViewMode);
+  }
+
   // ── Timesteps ─────────────────────────────────────────────────────────────────
 
   async function loadTimesteps(eventId) {
@@ -596,7 +674,10 @@
     const done = timesteps;
     _timestepsDone  = done;
     if (!done.length) {
-      container.innerHTML = '<div class="empty-msg">No timesteps yet</div>';
+      container.innerHTML = currentEvent && currentEvent.analysis_mode === 'thermal_monitoring'
+        ? '<div class="empty-msg">Prepared historical risk view</div>'
+        : '<div class="empty-msg">No timesteps yet</div>';
+      await _loadPreparedRiskOverview();
       return;
     }
 
@@ -1033,7 +1114,13 @@
 
     var thermalActivityRequest = null;
     if (currentEvent.analysis_mode === 'thermal_monitoring' && _thermalViewMode !== 'replay') {
-      thermalActivityRequest = _thermalViewMode === 'persistent'
+      thermalActivityRequest = (_thermalViewMode === 'risk' || _thermalViewMode === 'anomalies')
+        ? window.API.getThermalMap({
+            region: currentEvent.region_id,
+            risk_level: _riskLevelsForFilter(),
+            limit: _thermalRiskFilter === 'all' ? 1500 : 1000,
+          })
+        : _thermalViewMode === 'persistent'
         ? window.API.getPersistentThermalSources(eid, 30, ts.slot_time)
         : _thermalViewMode === 'classification'
         ? window.API.getThermalClassifications(eid, 30, ts.slot_time)
@@ -1064,12 +1151,18 @@
     ]).then(function(r) {
       if (r[0].status === 'fulfilled') eventMap.renderPerimeter(r[0].value);
       if (r[1].status === 'fulfilled') {
-        if (_thermalViewMode === 'persistent') eventMap.renderPersistentSources(r[1].value);
+        if (_thermalViewMode === 'risk' || _thermalViewMode === 'anomalies') eventMap.renderThermalRiskEvents(r[1].value);
+        else if (_thermalViewMode === 'persistent') eventMap.renderPersistentSources(r[1].value);
         else if (_thermalViewMode === 'classification') eventMap.renderClassifiedSources(
           r[1].value,
           r[5].status === 'fulfilled' ? r[5].value : null,
         );
         else eventMap.renderHotspots(r[1].value);
+      } else if (_thermalViewMode === 'risk' || _thermalViewMode === 'anomalies') {
+        eventMap.renderThermalRiskEvents({
+          events: [],
+          error: 'Risk-event data could not be loaded. Please retry.',
+        });
       }
       if (r[2].status === 'fulfilled') eventMap.renderRiskZones(r[2].value);
       if (r[3].status === 'fulfilled') eventMap.renderRoads(r[3].value);
@@ -1091,13 +1184,37 @@
       window.API.getWindField(eid, tsid),
       hotspotRequest,
       industrialFacilitiesRequest,
+      currentEvent.analysis_mode === 'thermal_monitoring'
+        ? window.API.getThermalStats(currentEvent.region_id)
+        : Promise.resolve(null),
+      currentEvent.analysis_mode === 'thermal_monitoring'
+        ? window.API.getThermalEvents({
+            region: currentEvent.region_id,
+            risk_level: _riskLevelsForFilter(),
+            limit: 1,
+          })
+        : Promise.resolve(null),
     ]).then(function(r) {
       var forecast  = r[2].status === 'fulfilled' ? r[2].value : [];
       var windHours = r[3].status === 'fulfilled' ? r[3].value : [];
       // renderDashboard first (creates the DOM elements), then update weather into them
       var fireContext = r[1].status === 'fulfilled' ? r[1].value : null;
       if (thermalActivityRequest && r[4].status === 'fulfilled') {
-        fireContext = _mergeThermalActivity(fireContext, r[4].value);
+        fireContext = (_thermalViewMode === 'risk' || _thermalViewMode === 'anomalies')
+          ? _mergeThermalRisk(
+              fireContext,
+              r[4].value,
+              r[6].status === 'fulfilled' ? r[6].value : null,
+              r[7].status === 'fulfilled' ? r[7].value : null,
+            )
+          : _mergeThermalActivity(fireContext, r[4].value);
+      } else if (currentEvent.analysis_mode === 'thermal_monitoring' && r[6].status === 'fulfilled') {
+        fireContext = _mergeThermalRisk(
+          fireContext,
+          null,
+          r[6].value,
+          r[7].status === 'fulfilled' ? r[7].value : null,
+        );
       }
       window.Dashboard.renderDashboard(
         r[0].status === 'fulfilled' ? r[0].value : null,

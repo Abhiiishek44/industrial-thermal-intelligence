@@ -38,7 +38,9 @@ def _serialize(e):
     bounds = config.view_bbox or to_shape(e.bbox).bounds
     data_ready = True
     if config.analysis_mode == "thermal_monitoring":
-        data_ready = (
+        from services.thermal_intelligence import DEFAULT_EVENTS_PATH
+
+        data_ready = DEFAULT_EVENTS_PATH.exists() or (
             _event_dir(e) / "data_processed/thermal/classification_metadata.json"
         ).exists()
     return {

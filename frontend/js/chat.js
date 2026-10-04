@@ -41,7 +41,7 @@
       qs.push('What evidence supports the thermal source assessment?');
       qs.push('What uncertainties require ground verification?');
     } else if (report.risk_level && report.risk_level !== 'Unknown') {
-      qs.push('Why is the risk level classified as ' + report.risk_level + '?');
+      qs.push('Why was this event prioritized at ' + report.risk_level + ' risk?');
     }
 
     if (report.key_points && report.key_points.length) {
@@ -84,6 +84,7 @@
     document.getElementById('ai-chat-drawer-close')?.addEventListener('click', closeChat);
     document.getElementById('ai-chat-drawer-backdrop')?.addEventListener('click', closeChat);
     document.getElementById('ai-modal-close').addEventListener('click', close);
+    document.getElementById('ai-export-report-btn')?.addEventListener('click', _exportReport);
     document.getElementById('ai-modal-overlay').addEventListener('click', function(e) {
       if (e.target === document.getElementById('ai-modal-overlay')) close();
     });
@@ -204,6 +205,7 @@
       _reportData      = null;
       _reportDataCrowd = null;
       _viewingCrowd    = false;
+      _setExportAvailable(false);
       _clearChat();
       _updateEnhanceBtn();
     }
@@ -446,6 +448,126 @@
     document.getElementById('ai-report-ready').classList.toggle('hidden', on);
   }
 
+  function _setExportAvailable(available) {
+    const button = document.getElementById('ai-export-report-btn');
+    if (!button) return;
+    button.disabled = !available;
+    button.title = available
+      ? 'Download this report as a self-contained HTML file'
+      : 'Generate or load a report before exporting';
+  }
+
+  function _exportLabel(value) {
+    return String(value || '')
+      .replace(/[_-]+/g, ' ')
+      .replace(/\b\w/g, function(letter) { return letter.toUpperCase(); });
+  }
+
+  function _exportValue(value) {
+    if (value === null || value === undefined || value === '') {
+      return '<span class="unavailable">Unavailable</span>';
+    }
+    if (Array.isArray(value)) {
+      if (!value.length) return '<span class="unavailable">None reported</span>';
+      return '<ul>' + value.map(function(item) {
+        return '<li>' + (typeof item === 'object' && item !== null ? _exportValue(item) : _escHtml(String(item))) + '</li>';
+      }).join('') + '</ul>';
+    }
+    if (typeof value === 'object') {
+      const entries = Object.keys(value).filter(function(key) {
+        return value[key] !== null && value[key] !== undefined && value[key] !== '';
+      });
+      if (!entries.length) return '<span class="unavailable">No details available</span>';
+      return '<dl>' + entries.map(function(key) {
+        return '<div><dt>' + _escHtml(_exportLabel(key)) + '</dt><dd>' + _exportValue(value[key]) + '</dd></div>';
+      }).join('') + '</dl>';
+    }
+    if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+    return _escHtml(String(value));
+  }
+
+  function _exportSection(title, value) {
+    if (value === null || value === undefined) return '';
+    return '<section><h2>' + _escHtml(title) + '</h2>' + _exportValue(value) + '</section>';
+  }
+
+  function _safeFilename(value) {
+    const cleaned = String(value || 'situational-report')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 70);
+    return cleaned || 'situational-report';
+  }
+
+  function _exportReport() {
+    const report = _viewingCrowd ? _reportDataCrowd : _reportData;
+    if (!report) return;
+
+    const metadata = report.metadata || {};
+    const region = metadata.region || {};
+    const title = region.name || 'Situational Awareness Report';
+    const generatedAt = metadata.generated_at || new Date().toISOString();
+    const reportVariant = _viewingCrowd ? 'Crowd-enhanced' : 'Standard';
+    const summary = {
+      assessment_level: report.assessment_level,
+      risk_level: report.risk_level,
+      report_mode: report.report_mode,
+      key_points: report.key_points || [],
+      situation: report.situation,
+      key_risks: report.key_risks,
+      immediate_actions: report.immediate_actions,
+    };
+    const documentHtml = '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
+      '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+      '<title>' + _escHtml(title) + ' — Situational Awareness Report</title>' +
+      '<style>' +
+      ':root{color-scheme:light;font-family:Inter,Arial,sans-serif;color:#172033;background:#eef2f6}' +
+      '*{box-sizing:border-box}body{margin:0;padding:32px 18px;background:#eef2f6}' +
+      'main{max-width:900px;margin:auto;background:#fff;border:1px solid #dce3eb;border-radius:14px;padding:38px;box-shadow:0 12px 36px rgba(25,40,60,.08)}' +
+      'header{border-bottom:3px solid #ff6b35;padding-bottom:20px;margin-bottom:26px}h1{font-size:28px;margin:0 0 8px}h2{font-size:17px;margin:0 0 14px;color:#22324a}' +
+      '.kicker{color:#b7471f;text-transform:uppercase;letter-spacing:.12em;font-weight:800;font-size:11px}.meta{color:#607089;font-size:12px;line-height:1.7}' +
+      'section{margin:0 0 20px;padding:20px;border:1px solid #e0e6ed;border-radius:10px;break-inside:avoid}p,li,dd{font-size:13px;line-height:1.65}' +
+      'ul{margin:8px 0;padding-left:22px}dl{margin:0}dl>div{display:grid;grid-template-columns:minmax(150px,28%) 1fr;gap:16px;padding:9px 0;border-bottom:1px solid #edf1f5}' +
+      'dl>div:last-child{border-bottom:0}dt{font-size:11px;font-weight:750;color:#64748b;text-transform:uppercase;letter-spacing:.04em}dd{margin:0;min-width:0}' +
+      '.unavailable{color:#8894a5;font-style:italic}.notice{padding:12px 14px;background:#fff7e6;border:1px solid #f3d596;border-radius:8px;color:#77540f;font-size:12px}' +
+      'footer{border-top:1px solid #dfe5ec;margin-top:28px;padding-top:16px;color:#748095;font-size:11px}' +
+      '@media(max-width:600px){body{padding:0}main{border:0;border-radius:0;padding:24px}dl>div{grid-template-columns:1fr;gap:4px}}' +
+      '@media print{body{background:#fff;padding:0}main{box-shadow:none;border:0;max-width:none;padding:0}section{break-inside:avoid}}' +
+      '</style></head><body><main><header><div class="kicker">Decision support briefing</div>' +
+      '<h1>' + _escHtml(title) + '</h1><div class="meta">' +
+      _escHtml(reportVariant + ' report · Generated ' + generatedAt) +
+      (metadata.observation_time ? '<br>Observation time: ' + _escHtml(metadata.observation_time) : '') +
+      '</div></header>' +
+      ((metadata.warnings || []).length ? '<div class="notice"><strong>Data limitations</strong>' + _exportValue(metadata.warnings) + '</div><br>' : '') +
+      _exportSection('Executive overview', summary) +
+      _exportSection(report.report_mode === 'thermal_monitoring' ? 'Thermal analysis' : 'Risk analysis', report.risk) +
+      _exportSection('Population and impact', report.impact) +
+      _exportSection('Evacuation and roads', report.evacuation) +
+      _exportSection('Crowd intelligence', report.crowd) +
+      _exportSection('Report provenance', metadata) +
+      '<footer>Exported from Industrial Thermal Intelligence. Satellite thermal detections are observational evidence and may require ground verification.</footer>' +
+      '</main></body></html>';
+
+    const blob = new Blob([documentHtml], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const datePart = String(metadata.observation_time || generatedAt).slice(0, 10);
+    link.href = url;
+    link.download = _safeFilename(title) + '-' + datePart + (_viewingCrowd ? '-crowd' : '') + '-report.html';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+
+    const button = document.getElementById('ai-export-report-btn');
+    if (button) {
+      const original = button.textContent;
+      button.textContent = 'Exported';
+      setTimeout(function() { button.textContent = original; }, 1600);
+    }
+  }
+
   function _renderReport(report) {
     const thermal = report.report_mode === 'thermal_monitoring';
     const tabs = [
@@ -505,6 +627,7 @@
     });
 
     _showLoading(false);
+    _setExportAvailable(true);
   }
 
   // ── Structured panel renderers ───────────────────────────────────────────────

@@ -130,6 +130,27 @@
       var query = '?days=' + encodeURIComponent(days) + '&end=' + encodeURIComponent(end);
       return apiFetch('/api/events/' + eid + '/thermal/classifications' + query);
     },
+    async getThermalStats(region, year) {
+      var params = new URLSearchParams();
+      if (region) params.set('region', region);
+      if (year) params.set('year', year);
+      return apiFetch('/api/v1/thermal/stats' + (params.toString() ? '?' + params : ''));
+    },
+    async getThermalEvents(filters) {
+      var params = new URLSearchParams(filters || {});
+      return apiFetch('/api/v1/thermal/events' + (params.toString() ? '?' + params : ''));
+    },
+    async getThermalEvent(sourceEventId) {
+      return apiFetch('/api/v1/thermal/events/' + encodeURIComponent(sourceEventId));
+    },
+    async getThermalMap(filters) {
+      var params = new URLSearchParams(filters || {});
+      return apiFetch('/api/v1/thermal/map' + (params.toString() ? '?' + params : ''));
+    },
+    async getThermalSources(filters) {
+      var params = new URLSearchParams(filters || {});
+      return apiFetch('/api/v1/thermal/sources' + (params.toString() ? '?' + params : ''));
+    },
     async getIndustrialFacilities(eid) {
       return apiFetch('/api/events/' + eid + '/layers/industrial-facilities');
     },
