@@ -36,7 +36,9 @@
       '30d': '30-Day Activity',
       replay: 'Observation Replay',
       persistent: 'Persistent Sources',
-      classification: 'Source Classification',
+      risk: 'Risk Events',
+      anomalies: 'Thermal Anomalies',
+      classification: 'Legacy Classification',
     };
     const viewLabel = viewLabels[viewMode || thermal.view_mode] || 'Thermal Monitoring';
     const eventLabel = event && (event.name || event.region_name) ? (event.name || event.region_name) : 'Monitoring Region';
@@ -117,6 +119,10 @@
   function renderThermalDashboard(el, fireCtx, weatherForecast, industrialFacilities) {
     const fire = fireCtx.fire || {};
     const thermal = fireCtx.thermal || {};
+    if (thermal.risk_stats) {
+      renderRiskFirstDashboard(el, thermal, weatherForecast, industrialFacilities);
+      return;
+    }
     const wf = weatherForecast || [];
     const landcover = thermal.landcover_group_counts || {};
     const confidence = thermal.confidence_counts || {};
@@ -137,7 +143,7 @@
     }, new Map()).values()).sort(function(left, right) {
       return String(left.name).localeCompare(String(right.name));
     });
-    const viewLabel = thermal.view_mode === 'classification' ? 'Source Classification'
+    const viewLabel = thermal.view_mode === 'classification' ? 'Legacy Classification'
       : thermal.view_mode === 'persistent' ? 'Persistent Sources'
       : thermal.view_mode === '30d' ? '30-Day Activity'
       : thermal.view_mode === '5d' ? '5-Day Activity'
@@ -208,12 +214,13 @@
         '</div>' +
       '</div>' +
 
-      '<!-- Tile 4: Source Classification -->' +
+      '<!-- Tile 4: Legacy Classification -->' +
       '<div class="data-card thermal-classification-card p-5 flex flex-col gap-3 relative overflow-hidden" style="min-width:220px">' +
-        '<div class="font-label-caps text-label-caps text-on-surface-variant uppercase tracking-wider" style="font-size:10px;color:var(--text2);font-weight:700">Source Classification</div>' +
+        '<div class="font-label-caps text-label-caps text-on-surface-variant uppercase tracking-wider" style="font-size:10px;color:var(--text2);font-weight:700">Legacy Classification</div>' +
         '<div class="thermal-breakdown" role="img" aria-label="Source class breakdown">' +
           breakdownBars(thermal.classification_counts, classLabels, 'Classification counts unavailable') +
         '</div>' +
+        '<div class="context-disclaimer">Rule-based fallback for analyst review; not a verified source label.</div>' +
         '<div class="thermal-summary-row"><span>Largest observed envelope</span><b>' + v(thermal.largest_thermal_footprint_km2, 2, 'km²') + '</b></div>' +
       '</div>' +
 
@@ -266,6 +273,72 @@
           wf.filter((_, i) => i % 3 === 0).map(f => {
             const spd = (f.wind_speed_kmh || f.speed_kmh);
             return '<span>+' + f.hour + 'h<br><b style="font-family:\'JetBrains Mono\',monospace">' + (spd != null ? spd.toFixed(0) : '—') + '</b></span>';
+          }).join('') +
+        '</div>' +
+      '</div>';
+  }
+
+  function renderRiskFirstDashboard(el, thermal, weatherForecast, industrialFacilities) {
+    const stats = thermal.risk_stats || {};
+    const top = thermal.top_risk_event || {};
+    const wf = weatherForecast || [];
+    const facilities = industrialFacilities?.features || [];
+    const agreementRate = stats.total_events
+      ? Math.round((Number(stats.iforest_agreement_count || 0) / Number(stats.total_events)) * 100)
+      : 0;
+    const detailRow = function(label, value) {
+      return '<div class="thermal-summary-row"><span>' + text(label) + '</span><b>' + text(value) + '</b></div>';
+    };
+    el.innerHTML =
+      '<div class="data-card risk-overview-card">' +
+        '<div class="dash-card-title">Thermal Events</div>' +
+        '<div class="risk-primary-metric">' + vn(stats.total_events || 0) + '<small>historical events</small></div>' +
+        detailRow('Critical', vn(stats.critical_events || 0)) +
+        detailRow('High', vn(stats.high_events || 0)) +
+      '</div>' +
+      '<div class="data-card">' +
+        '<div class="dash-card-title">High Confidence Alerts</div>' +
+        '<div class="risk-primary-metric">' + vn(stats.high_confidence_alerts || 0) + '<small>prioritized alerts</small></div>' +
+        detailRow('Visible on map', vn(thermal.risk_events_visible || 0)) +
+        detailRow('Current filter', String(thermal.risk_filter || '').replaceAll('_', ' ')) +
+      '</div>' +
+      '<div class="data-card">' +
+        '<div class="dash-card-title">Source Anomaly</div>' +
+        '<div class="risk-primary-metric">' + v(top.max_frp_ratio, 1, '×') + '<small>FRP vs 30-day baseline</small></div>' +
+        detailRow('FRP z-score', top.max_frp_zscore != null ? Number(top.max_frp_zscore).toFixed(2) : '—') +
+        detailRow('Brightness z-score', top.max_brightness_zscore != null ? Number(top.max_brightness_zscore).toFixed(2) : '—') +
+      '</div>' +
+      '<div class="data-card">' +
+        '<div class="dash-card-title">Model Agreement</div>' +
+        '<div class="risk-primary-metric">' + vn(stats.iforest_agreement_count || 0) + '<small>Isolation Forest agreements</small></div>' +
+        detailRow('Agreement share', agreementRate + '%') +
+        detailRow('Top event agreement', top.iforest_agreement ? 'Yes' : 'No') +
+      '</div>' +
+      '<div class="data-card">' +
+        '<div class="dash-card-title">Persistence</div>' +
+        '<div class="risk-primary-metric">' + vn(top.detection_count || 0) + '<small>detections in top event</small></div>' +
+        detailRow('Prior 30d detections', vn(top.source_detections_prev_30d || 0)) +
+        detailRow('Prior 30d active days', vn(top.source_active_days_prev_30d || 0)) +
+      '</div>' +
+      '<div class="data-card">' +
+        '<div class="dash-card-title">Facility Context</div>' +
+        '<div class="risk-primary-metric">' + vn(facilities.length) + '<small>mapped facilities</small></div>' +
+        detailRow('Context type', 'Supporting evidence') +
+        '<div class="context-disclaimer">Proximity does not verify the source type.</div>' +
+      '</div>' +
+      '<div class="data-card" style="min-width:210px">' +
+        '<div class="dash-card-title">Weather</div>' +
+        '<div id="fcast-weather" class="fcast-weather">' +
+          (wf.length ? weatherSummary(wf[0]) : '<span style="opacity:.4;font-size:10px">Loading…</span>') +
+        '</div>' +
+      '</div>' +
+      '<div class="data-card dash-card-wide">' +
+        '<div class="dash-card-title">Wind Forecast +12h</div>' +
+        '<div id="dash-wind-sparkline">' + windSparkline(wf) + '</div>' +
+        '<div id="dash-wind-labels" class="forecast-labels">' +
+          wf.filter((_, i) => i % 3 === 0).map(f => {
+            const speed = f.wind_speed_kmh || f.speed_kmh;
+            return '<span>+' + f.hour + 'h<br><b>' + (speed != null ? Number(speed).toFixed(0) : '—') + '</b></span>';
           }).join('') +
         '</div>' +
       '</div>';

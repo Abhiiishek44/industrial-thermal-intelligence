@@ -100,8 +100,25 @@
           <span class="pred-type-info"><span class="pred-type-label">Persistent Sources</span><span class="pred-type-hint">Recurring spatial clusters over 30 days</span></span>
         </label>
         <label class="pred-type-opt">
-          <input type="radio" name="thermal-view" value="classification" checked>
-          <span class="pred-type-info"><span class="pred-type-label">Source Classification</span><span class="pred-type-hint">Industrial fire, flare, crop burn, mining, wildfire and process heat</span></span>
+          <input type="radio" name="thermal-view" value="risk" checked>
+          <span class="pred-type-info"><span class="pred-type-label">Risk Events</span><span class="pred-type-hint">Prioritized source-specific anomalies</span></span>
+        </label>
+        <label class="pred-type-opt">
+          <input type="radio" name="thermal-view" value="anomalies">
+          <span class="pred-type-info"><span class="pred-type-label">Thermal Anomalies</span><span class="pred-type-hint">Historical anomaly candidates by risk</span></span>
+        </label>
+        <div class="thermal-risk-filter-wrap">
+          <label for="thermal-risk-filter">Risk filter</label>
+          <select id="thermal-risk-filter">
+            <option value="critical">Critical</option>
+            <option value="high_critical" selected>High + Critical</option>
+            <option value="moderate_plus">Moderate+</option>
+            <option value="all">All</option>
+          </select>
+        </div>
+        <label class="pred-type-opt legacy-view-opt">
+          <input type="radio" name="thermal-view" value="classification">
+          <span class="pred-type-info"><span class="pred-type-label">Legacy Classification</span><span class="pred-type-hint">Rule-based fallback for analyst review only</span></span>
         </label>
       </div>
 
@@ -169,6 +186,7 @@
         <div class="leg-row"><span class="leg-line" style="background:#ff8c00"></span>At-risk road</div>
         <div class="leg-row"><span class="leg-line" style="background:#44dd44"></span>Clear road</div>
       </div>
+      <aside id="thermal-event-detail" class="thermal-event-detail hidden" aria-live="polite" aria-label="Thermal event details"></aside>
     </div>
 
   </div><!-- /event-body -->
@@ -208,6 +226,7 @@
       </div>
       <span id="ai-modal-badge" class="ai-badge"></span>
       <div class="header-spacer"></div>
+      <button id="ai-export-report-btn" class="ai-export-btn" type="button" disabled title="Generate or load a report before exporting">Export report</button>
       <button id="ai-enhance-crowd-btn" class="ai-enhance-btn" disabled title="Requires crowd prediction to be run first">Enhance with Crowd Data</button>
       <button id="ai-modal-close" class="modal-close-btn">✕</button>
     </div>

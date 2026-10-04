@@ -35,6 +35,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # /app/data so generated observations, reports and uploads survive redeploys.
 COPY backend/ ./backend/
 COPY frontend/ ./frontend/
+# Immutable presentation artifacts live outside /app/data so an empty Railway
+# volume mounted at /app/data cannot hide them on first deploy.
+COPY data/processed/final_fused_events.parquet ./runtime_artifacts/final_fused_events.parquet
+COPY data/processed/thermal_sources.parquet ./runtime_artifacts/thermal_sources.parquet
+COPY models/industrial_iforest_train_2021_2024.joblib ./models/industrial_iforest_train_2021_2024.joblib
 
 WORKDIR /app/backend
 

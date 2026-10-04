@@ -466,6 +466,67 @@ components:
 
 paths:
 
+  /api/v1/thermal/stats:
+    get:
+      security: []
+      summary: Aggregate prepared thermal risk-event statistics
+      parameters:
+        - { name: region, in: query, schema: { type: string } }
+        - { name: year, in: query, schema: { type: integer } }
+      responses:
+        200: { description: Risk-level, confidence, model-agreement, and regional counts }
+
+  /api/v1/thermal/events:
+    get:
+      security: []
+      summary: List explainable thermal risk events sorted by prioritization score
+      parameters:
+        - { name: risk_level, in: query, description: Comma-separated levels, schema: { type: string } }
+        - { name: confidence, in: query, schema: { type: string } }
+        - { name: region, in: query, schema: { type: string } }
+        - { name: year, in: query, schema: { type: integer } }
+        - { name: iforest_agreement, in: query, schema: { type: boolean } }
+        - { name: limit, in: query, schema: { type: integer, default: 100, maximum: 2000 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        200: { description: Filtered and paginated fused events }
+
+  /api/v1/thermal/events/{source_event_id}:
+    get:
+      security: []
+      summary: Get full thermal-event explainability and supporting context
+      parameters:
+        - { name: source_event_id, in: path, required: true, schema: { type: string } }
+      responses:
+        200: { description: Complete fused event and persistent-source context }
+        404: { description: Thermal event not found }
+
+  /api/v1/thermal/map:
+    get:
+      security: []
+      summary: Get lightweight risk-colored map markers
+      description: Defaults to high and critical events, ordered by risk prioritization score.
+      parameters:
+        - { name: risk_level, in: query, schema: { type: string, default: "high,critical" } }
+        - { name: confidence, in: query, schema: { type: string } }
+        - { name: region, in: query, schema: { type: string } }
+        - { name: year, in: query, schema: { type: integer } }
+        - { name: iforest_agreement, in: query, schema: { type: boolean } }
+        - { name: limit, in: query, schema: { type: integer, default: 1000, maximum: 2000 } }
+      responses:
+        200: { description: Lightweight thermal-event marker records }
+
+  /api/v1/thermal/sources:
+    get:
+      security: []
+      summary: List prepared persistent thermal sources
+      parameters:
+        - { name: region, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 500, maximum: 2000 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        200: { description: Persistent thermal-source records }
+
   # ── Auth ──────────────────────────────────────────────────────────────────
 
   /auth/register:

@@ -49,6 +49,92 @@
 
   const _LIGHT_BASES = new Set(['Light', 'OSM', 'Topo']);
 
+  const THERMAL_RISK_COLORS = {
+    critical: '#dc2626',
+    high: '#f97316',
+    moderate: '#eab308',
+    low: '#16a34a',
+  };
+
+  function safeHtml(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function metric(value, digits, suffix) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number.toFixed(digits) + (suffix || '') : 'Unavailable';
+  }
+
+  function renderThermalEventDetail(event, panel) {
+    if (!panel || !event) return;
+    const context = event.supporting_context || {};
+    const ratio = Number(event.max_frp_ratio);
+    const agreement = Boolean(event.iforest_agreement);
+    let explanation = 'This source-specific anomaly is prioritized from its thermal evidence and historical behavior.';
+    if (Number.isFinite(ratio)) {
+      explanation = 'This thermal source operated ' + ratio.toFixed(1) +
+        '× above its 30-day FRP baseline';
+      explanation += agreement
+        ? ', and the Isolation Forest also flagged the event as anomalous.'
+        : '. The Isolation Forest did not independently agree with this event.';
+    }
+    const contextRows = [
+      ['Built-up industrial land cover', context.builtup_fraction_1km_mean != null
+        ? metric(Number(context.builtup_fraction_1km_mean) * 100, 1, '%') : null],
+      ['Nearest industrial facility', context.distance_to_industrial_km_mean != null
+        ? metric(context.distance_to_industrial_km_mean, 2, ' km') : null],
+      ['Nearest factory', context.distance_to_factory_km_mean != null
+        ? metric(context.distance_to_factory_km_mean, 2, ' km') : null],
+      ['Nearest power plant', context.distance_to_powerplant_km_mean != null
+        ? metric(context.distance_to_powerplant_km_mean, 2, ' km') : null],
+      ['Nearest refinery', context.distance_to_refinery_km_mean != null
+        ? metric(context.distance_to_refinery_km_mean, 2, ' km') : null],
+      ['Mapped industry within 2 km', context.industrial_count_2km_mean],
+    ].filter(function(row) { return row[1] != null && row[1] !== 'Unavailable'; });
+    const row = function(label, value) {
+      return '<div><span>' + safeHtml(label) + '</span><b>' + safeHtml(value == null ? 'Unavailable' : value) + '</b></div>';
+    };
+    panel.innerHTML =
+      '<div class="thermal-detail-header"><div><small>Thermal anomaly candidate</small><h3>' +
+        safeHtml(event.source_event_id) + '</h3></div><button type="button" aria-label="Close event details">×</button></div>' +
+      '<div class="thermal-detail-summary risk-border-' + safeHtml(event.final_risk_level) + '">' +
+        '<span>Abnormal thermal signature</span><strong>' + safeHtml(event.final_risk_level || 'Unknown') +
+        ' risk · ' + safeHtml(event.final_confidence || 'Unknown') + ' confidence</strong></div>' +
+      '<p class="thermal-detail-explanation">' + safeHtml(explanation) + '</p>' +
+      '<section><h4>Event</h4><div class="thermal-detail-grid">' +
+        row('Thermal source ID', event.thermal_source_id) +
+        row('Region', String(event.region_name || '').replaceAll('_', ' ')) +
+        row('Start', event.event_start) + row('End', event.event_end) +
+        row('Latitude / longitude', metric(event.latitude, 5) + ' / ' + metric(event.longitude, 5)) +
+      '</div></section>' +
+      '<section><h4>Thermal evidence</h4><div class="thermal-detail-grid">' +
+        row('Peak FRP', metric(event.max_frp, 2, ' MW')) +
+        row('30-day baseline FRP', metric(event.source_baseline_frp, 2, ' MW')) +
+        row('FRP increase ratio', metric(event.max_frp_ratio, 2, '×')) +
+        row('FRP z-score', metric(event.max_frp_zscore, 2)) +
+        row('Brightness z-score', metric(event.max_brightness_zscore, 2)) +
+        row('Detection count', event.detection_count) +
+      '</div></section>' +
+      '<section><h4>Model evidence</h4><div class="thermal-detail-grid">' +
+        row('Isolation Forest agreement', agreement ? 'Yes' : 'No') +
+        row('Isolation Forest anomaly score', metric(event.max_iforest_anomaly_score, 3)) +
+        row('Source event score', metric(event.source_event_score, 3)) +
+        row('Risk prioritization score', metric(event.final_risk_score, 3)) +
+      '</div></section>' +
+      '<section><h4>Reason</h4><p>' + safeHtml(event.final_reason || 'No reason supplied') + '</p></section>' +
+      '<section><h4>Supporting context</h4>' +
+        (contextRows.length ? '<div class="thermal-detail-grid">' + contextRows.map(function(item) {
+          return row(item[0], item[1]);
+        }).join('') + '</div>' : '<p>No mapped facility context is available for this source.</p>') +
+        '<small>Facility proximity and land cover are contextual evidence, not a verified source classification.</small></section>';
+    panel.classList.remove('hidden');
+    panel.querySelector('.thermal-detail-header button').addEventListener('click', function() {
+      panel.classList.add('hidden');
+    });
+  }
+
   function roadColors(darkBase) {
     return darkBase ? ROAD_COLORS_DARK : ROAD_COLORS_LIGHT;
   }
@@ -368,6 +454,8 @@
       Object.values(this._layers).forEach(lg => lg.clearLayers());
       Object.values(this._windLayers).forEach(lg => lg.clearLayers());
       Object.values(this._actualPerimLayers).forEach(lg => lg.clearLayers());
+      document.getElementById('thermal-event-detail')?.classList.add('hidden');
+      document.getElementById('thermal-map-notice')?.remove();
     }
 
     setRiskVisible(horizon, visible) {
@@ -458,6 +546,98 @@
       }).addTo(this._layers.hotspots);
     }
 
+    renderThermalRiskEvents(payload) {
+      this._layers.hotspots.clearLayers();
+      const events = payload && Array.isArray(payload.events) ? payload.events : [];
+      const existingNotice = document.getElementById('thermal-map-notice');
+      if (existingNotice) existingNotice.remove();
+      if (!events.length) {
+        const mapWrap = document.getElementById('event-map-wrap');
+        if (mapWrap) {
+          const notice = document.createElement('div');
+          notice.id = 'thermal-map-notice';
+          notice.className = 'thermal-map-notice';
+          notice.innerHTML = '<b>No matching thermal anomalies</b><span>' +
+            safeHtml(payload?.error || 'The selected risk filter has no events in this region. Try Moderate+ or All.') +
+            '</span>';
+          mapWrap.appendChild(notice);
+        }
+        return;
+      }
+      const renderer = this._hotspotCanvas;
+      const map = this.map;
+      const detailsPanel = document.getElementById('thermal-event-detail');
+      const layer = L.geoJSON({
+        type: 'FeatureCollection',
+        features: events.map(function(event) {
+          return {
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [event.longitude, event.latitude] },
+            properties: event,
+          };
+        }),
+      }, {
+        pointToLayer(f, latlng) {
+          const p = f.properties || {};
+          const score = Number(p.final_risk_score || 0);
+          const color = THERMAL_RISK_COLORS[String(p.final_risk_level || '').toLowerCase()] || '#6b7280';
+          return L.circleMarker(latlng, {
+            radius: Math.max(7, Math.min(16, 7 + score * 8)),
+            color: color,
+            fillColor: color,
+            fillOpacity: .82,
+            opacity: .98,
+            weight: 2,
+            renderer: renderer,
+          });
+        },
+        onEachFeature(f, marker) {
+          const p = f.properties || {};
+          marker.bindPopup(
+            '<div class="thermal-risk-popup">' +
+              '<div class="thermal-popup-kicker">Source</div><b>' + safeHtml(p.thermal_source_id || 'Unknown') + '</b>' +
+              '<div class="thermal-popup-kicker">Assessment</div><b>Abnormal thermal signature</b>' +
+              '<div class="thermal-popup-grid"><span>Risk level</span><b class="risk-' + safeHtml(p.final_risk_level) + '">' + safeHtml(p.final_risk_level || 'Unknown') + '</b>' +
+              '<span>Confidence</span><b>' + safeHtml(p.final_confidence || 'Unknown') + '</b>' +
+              '<span>Peak FRP</span><b>' + metric(p.max_frp, 1, ' MW') + '</b>' +
+              '<span>30-day baseline</span><b>' + metric(p.source_baseline_frp, 1, ' MW') + '</b>' +
+              '<span>FRP increase</span><b>' + metric(p.max_frp_ratio, 1, '×') + '</b>' +
+              '<span>Detections</span><b>' + safeHtml(p.detection_count == null ? 'Unavailable' : p.detection_count) + '</b>' +
+              '<span>IF agreement</span><b>' + (p.iforest_agreement ? 'Yes' : 'No') + '</b>' +
+              '<span>Risk prioritization score</span><b>' + metric(p.final_risk_score, 3) + '</b></div>' +
+              '<button type="button" class="thermal-detail-open">View explainability</button>' +
+            '</div>',
+            { maxWidth: 340 },
+          );
+          marker.on('popupopen', function() {
+            const button = marker.getPopup().getElement()?.querySelector('.thermal-detail-open');
+            if (!button) return;
+            button.addEventListener('click', function() {
+              button.disabled = true;
+              button.textContent = 'Loading…';
+              window.API.getThermalEvent(p.source_event_id).then(function(event) {
+                renderThermalEventDetail(event, detailsPanel);
+                marker.closePopup();
+              }).catch(function(error) {
+                button.disabled = false;
+                button.textContent = 'Details unavailable';
+                button.title = error.message;
+              });
+            }, { once: true });
+          });
+        },
+      }).addTo(this._layers.hotspots);
+      const bounds = layer.getBounds();
+      if (bounds.isValid()) {
+        // Prepared source regions can be wider than the legacy monitoring AOI.
+        // Fit to the returned anomaly markers so valid events are not off-screen.
+        map.fitBounds(bounds, { padding: [42, 42], maxZoom: 10 });
+        setTimeout(function() {
+          if (map.hasLayer(layer)) map.fitBounds(bounds, { padding: [42, 42], maxZoom: 10 });
+        }, 250);
+      }
+    }
+
     renderClassifiedSources(geojson, observations) {
       this._layers.hotspots.clearLayers();
       const renderer = this._hotspotCanvas;
@@ -539,11 +719,11 @@
             : 'N/A';
           layer.bindPopup(
             '<b>' + (p.cluster_id || 'Thermal source') + '</b><br>' +
-            'Classification: <b>' + thermalClassLabel(p.source_class) + '</b><br>' +
+            'Legacy rule assessment: <b>' + thermalClassLabel(p.source_class) + '</b><br>' +
             'Assessment state: ' + (p.operational_state || 'N/A').replaceAll('_', ' ') + '<br>' +
             'Alert: <b>' + (p.alert_level || 'N/A') + '</b><br>' +
             'Subtype: ' + (p.source_subtype || 'N/A').replaceAll('_', ' ') + '<br>' +
-            'Confidence: ' + (p.classification_confidence != null
+            'Rule confidence: ' + (p.classification_confidence != null
               ? Math.round(Number(p.classification_confidence) * 100) + '%'
               : 'N/A') + '<br>' +
             'Detections / active days: ' + (p.detection_count || 0) + ' / ' +

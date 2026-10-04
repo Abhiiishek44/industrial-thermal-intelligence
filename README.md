@@ -1,16 +1,16 @@
 # Industrial Thermal Intelligence
 
-An explainable geospatial monitoring platform for identifying and investigating
-thermal activity across Indian industrial corridors and forest landscapes. It
-turns NASA FIRMS hotspot detections into map-ready evidence by adding land
-cover, nearby industrial context, and persistence analysis, then presents the
-results through a Flask API and browser dashboard.
+An explainable geospatial monitoring platform for identifying and prioritizing
+thermal anomalies across Indian industrial corridors and forest landscapes. It
+combines NASA FIRMS observations, source-specific historical baselines,
+persistence, Isolation Forest agreement, land cover, and nearby industrial
+context into map-ready risk evidence served by a Flask API and Leaflet dashboard.
 
 ![Dashboard showing regional thermal activity, persistent sources, and classifications](assets/Screenshot_1.png?v=1ecfa735f3c3)
 
 The dashboard helps analysts move from a raw satellite detection to a more
-useful question: is this likely industrial process heat, gas flaring,
-agricultural burning, mining activity, wildfire, or an unresolved source?
+defensible question: which source-specific anomalies need review first, and
+what thermal and contextual evidence explains that prioritization?
 
 ## Live deployment
 
@@ -55,8 +55,10 @@ the REST API.
 - ESA WorldCover cropland, forest, built-up and bare-land context
 - OpenStreetMap industrial, oil/gas, power and mining infrastructure context
 - Separate persistent-source and short-lived thermal-episode analysis
-- Explainable seven-way rules-v2 classification with confidence and evidence
-- GeoJSON APIs and Leaflet overlays for 5-day, 30-day, persistence and classification views
+- Cached, prepared anomaly/fusion artifacts; no model retraining at startup
+- Risk-first Leaflet markers, explainability details, filters, and dashboard cards
+- Preserved seven-way rules classification as an explicitly legacy fallback view
+- GeoJSON APIs and Leaflet overlays for 5-day, 30-day, persistence and legacy classification views
 - Automatic four-hour region-scoped FIRMS refresh with dashboard freshness polling
 
 ## Monitoring coverage
@@ -95,7 +97,7 @@ Collection, normalization, and regional filtering
 Spatial enrichment and persistence analysis
         |
         v
-Explainable source classification ----> PostgreSQL + PostGIS
+Source anomaly + Isolation Forest fusion ----> PostgreSQL + PostGIS
                                            |
                                            v
                               Flask API and Leaflet dashboard (/demo)
@@ -182,6 +184,7 @@ AUTO_PREPARE_REGIONS=vijayanagar
 
 FIRMS_HISTORY_AUTO_FETCH=0
 THERMAL_AUTO_REFRESH=0
+RUN_OFFLINE_PIPELINE_ON_STARTUP=0
 
 # Optional AI configuration
 LLM_PROVIDER=claude
@@ -208,6 +211,9 @@ Add only the settings needed for the functionality you want:
 
 - **Live FIRMS refresh:** set `FIRMS_API_KEY`, `THERMAL_AUTO_REFRESH=1`, and an
   optional `THERMAL_REFRESH_INTERVAL_HOURS` value.
+- **Legacy/offline preprocessing:** remains disabled at startup. Set
+  `RUN_OFFLINE_PIPELINE_ON_STARTUP=1` only when intentionally rebuilding the
+  older replay, persistence, and rule-classification artifacts.
 - **All public regions:** set `AUTO_PREPARE_REGIONS=all`; this can require more
   time and storage than a single-region setup.
 - **AI reports and chat:** set `LLM_PROVIDER` to `claude` or `gemini` and add
