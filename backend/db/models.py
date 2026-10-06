@@ -94,6 +94,129 @@ class EventTimestep(db.Model):
     created_at = db.Column(db.DateTime, server_default=db.func.now())
 
 
+# Near-real-time FIRMS persistence.  These tables are intentionally separate
+# from ``FireEvent`` above: that entity represents configured analysis regions,
+# while a monitoring event represents one physical thermal incident.
+class MonitoringFireEvent(db.Model):
+    __tablename__ = "monitoring_fire_events"
+    __table_args__ = (
+        db.Index("ix_monitoring_fire_events_last_detected", "last_detected_at"),
+        db.Index("ix_monitoring_fire_events_status", "status"),
+        db.Index("ix_monitoring_fire_events_region", "monitoring_region_id"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    monitoring_region_id = db.Column(
+        db.Integer, db.ForeignKey("fire_events.id"), nullable=True
+    )
+    event_key = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    centroid_latitude = db.Column(db.Float, nullable=False)
+    centroid_longitude = db.Column(db.Float, nullable=False)
+    location = db.Column(Geometry("POINT", srid=4326), nullable=True)
+    first_detected_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    last_detected_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    status = db.Column(db.String(16), nullable=False, default="NEW")
+    detection_count = db.Column(db.Integer, nullable=False, default=1)
+    max_frp = db.Column(db.Float, nullable=True)
+    average_frp = db.Column(db.Float, nullable=True)
+    predicted_class = db.Column(db.String(64), nullable=True)
+    confidence = db.Column(db.Float, nullable=True)
+    alert_status = db.Column(db.String(24), nullable=False, default="NOT_EVALUATED")
+    alert_sent_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now())
+    updated_at = db.Column(
+        db.DateTime(timezone=True), server_default=db.func.now(), onupdate=db.func.now()
+    )
+
+
+class FireDetection(db.Model):
+    __tablename__ = "fire_detections"
+    __table_args__ = (
+        db.UniqueConstraint("detection_key", name="uq_fire_detections_detection_key"),
+        db.Index("ix_fire_detections_acquisition_time", "acquisition_time"),
+        db.Index("ix_fire_detections_event_id", "fire_event_id"),
+        db.Index("ix_fire_detections_predicted_class", "predicted_class"),
+        db.Index("ix_fire_detections_region", "monitoring_region_id"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    monitoring_region_id = db.Column(
+        db.Integer, db.ForeignKey("fire_events.id"), nullable=True
+    )
+    detection_key = db.Column(db.String(64), nullable=False)
+    fire_event_id = db.Column(
+        db.Integer, db.ForeignKey("monitoring_fire_events.id"), nullable=True
+    )
+    latitude = db.Column(db.Float, nullable=False)
+    longitude = db.Column(db.Float, nullable=False)
+    location = db.Column(Geometry("POINT", srid=4326), nullable=True)
+    acquisition_time = db.Column(db.DateTime(timezone=True), nullable=False)
+    received_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    data_latency_seconds = db.Column(db.Integer, nullable=False, default=0)
+    satellite = db.Column(db.String(32), nullable=False)
+    instrument = db.Column(db.String(32), nullable=False)
+    source_product = db.Column(db.String(64), nullable=True)
+    brightness = db.Column(db.Float, nullable=True)
+    bright_ti4 = db.Column(db.Float, nullable=True)
+    bright_ti5 = db.Column(db.Float, nullable=True)
+    frp = db.Column(db.Float, nullable=True)
+    firms_confidence = db.Column(db.String(32), nullable=True)
+    day_night = db.Column(db.String(8), nullable=True)
+    land_cover = db.Column(db.String(64), nullable=True)
+    landcover_group = db.Column(db.String(32), nullable=True)
+    inside_industrial_polygon = db.Column(db.Boolean, nullable=True)
+    near_industrial_facility = db.Column(db.Boolean, nullable=True)
+    model_features = db.Column(db.JSON, nullable=True)
+    predicted_class = db.Column(db.String(64), nullable=True)
+    model_confidence = db.Column(db.Float, nullable=True)
+    model_version = db.Column(db.String(64), nullable=False)
+    alert_status = db.Column(db.String(24), nullable=False, default="NOT_EVALUATED")
+    alert_sent_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now())
+    updated_at = db.Column(
+        db.DateTime(timezone=True), server_default=db.func.now(), onupdate=db.func.now()
+    )
+
+    fire_event = db.relationship(
+        "MonitoringFireEvent",
+        backref=db.backref("detections", lazy=True),
+    )
+
+
+class FireAlert(db.Model):
+    __tablename__ = "fire_alerts"
+    __table_args__ = (
+        db.UniqueConstraint("deduplication_key", name="uq_fire_alerts_deduplication_key"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    fire_event_id = db.Column(
+        db.Integer, db.ForeignKey("monitoring_fire_events.id"), nullable=False, index=True
+    )
+    detection_id = db.Column(
+        db.Integer, db.ForeignKey("fire_detections.id"), nullable=True
+    )
+    alert_type = db.Column(db.String(32), nullable=False)
+    severity = db.Column(db.String(16), nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    deduplication_key = db.Column(db.String(128), nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now())
+
+
+class FirmsSyncState(db.Model):
+    __tablename__ = "firms_sync_state"
+
+    id = db.Column(db.Integer, primary_key=True, default=1)
+    status = db.Column(db.String(24), nullable=False, default="never")
+    last_attempt_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    last_successful_sync = db.Column(db.DateTime(timezone=True), nullable=True)
+    records_received = db.Column(db.Integer, nullable=False, default=0)
+    new_records = db.Column(db.Integer, nullable=False, default=0)
+    duplicates = db.Column(db.Integer, nullable=False, default=0)
+    prediction_failures = db.Column(db.Integer, nullable=False, default=0)
+    error = db.Column(db.Text, nullable=True)
+
+
 # 2. Crowd intelligence ────────────────────────────────────────────────────────
 
 class Theme(db.Model):

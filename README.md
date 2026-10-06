@@ -59,7 +59,8 @@ the REST API.
 - Risk-first Leaflet markers, explainability details, filters, and dashboard cards
 - Preserved seven-way rules classification as an explicitly legacy fallback view
 - GeoJSON APIs and Leaflet overlays for 5-day, 30-day, persistence and legacy classification views
-- Automatic four-hour region-scoped FIRMS refresh with dashboard freshness polling
+- Configurable 15-minute region-scoped FIRMS refresh with dashboard freshness polling
+- Database-enforced pixel deduplication, rolling 24-hour event view, and one-time event alerts
 
 ## Monitoring coverage
 
@@ -88,16 +89,16 @@ The region definitions and their programmatic IDs are maintained in
 ## How it works
 
 ```text
-NASA FIRMS detections
+NASA FIRMS NOAA-20 / NOAA-21 NRT detections
         |
         v
-Collection, normalization, and regional filtering
+15-minute collection, UTC acquisition-time normalization, and deduplication
         |
         v
 Spatial enrichment and persistence analysis
         |
         v
-Source anomaly + Isolation Forest fusion ----> PostgreSQL + PostGIS
+Saved 2021-2024 Isolation Forest inference (no retraining) ----> PostgreSQL + PostGIS
                                            |
                                            v
                               Flask API and Leaflet dashboard (/demo)
@@ -210,7 +211,7 @@ region catalog, and prepares the selected region in the background.
 Add only the settings needed for the functionality you want:
 
 - **Live FIRMS refresh:** set `FIRMS_API_KEY`, `THERMAL_AUTO_REFRESH=1`, and an
-  optional `THERMAL_REFRESH_INTERVAL_HOURS` value.
+  optional `FIRMS_POLL_INTERVAL_MINUTES` value.
 - **Legacy/offline preprocessing:** remains disabled at startup. Set
   `RUN_OFFLINE_PIPELINE_ON_STARTUP=1` only when intentionally rebuilding the
   older replay, persistence, and rule-classification artifacts.
@@ -241,7 +242,7 @@ See the complete [Railway Docker deployment guide](docs/RAILWAY_DEPLOYMENT.md).
 
 When `FIRMS_API_KEY` and `THERMAL_AUTO_REFRESH=1` are configured, the backend
 starts a near-real-time refresh after initial preparation and repeats it every
-`THERMAL_REFRESH_INTERVAL_HOURS` (four hours by default). Each successful cycle
+`FIRMS_POLL_INTERVAL_MINUTES` (15 minutes by default). Each successful cycle
 archives new daily observations, rebuilds enrichment/persistence/classification
 artifacts and advances the monitoring timeline. The browser checks lightweight
 refresh metadata every five minutes and reloads map layers only when the latest
@@ -256,6 +257,9 @@ The dashboard is served at `/demo`. Primary API areas are:
 - `/api/events/<event_id>/thermal/*` for overview, history, refresh status,
   detections, persistent clusters, and classifications
 - `/api/events/<event_id>/field-reports` for authenticated crowd reports
+- `/api/fires/recent?hours=24` for raw detections in an acquisition-time window
+- `/api/fires/events?hours=24&region_event_id=<configured-event-id>` and `/api/fires/events/<id>` for grouped events (omit `region_event_id` for a global view)
+- `/api/fires/status` for scheduler, model-version, source, and sync health
 
 The complete request and response contract is available in
 [docs/api.yaml](docs/api.yaml).
@@ -285,10 +289,10 @@ nearby facility, and supporting spatial evidence.
 
 ## Testing
 
-Run the test suite from the repository root:
+Run the near-real-time ingestion regression suite from the repository root:
 
 ```bash
-python -m pytest tests
+python -m unittest discover -s backend/tests -v
 ```
 
 The test suite covers thermal data preparation, persistence and
@@ -302,6 +306,31 @@ evacuation and road-impact analysis, synthetic crowd activity, and optional AI
 situation reports. This workflow is not the primary public monitoring product.
 
 ## Operational notes
+
+### Model lifecycle and live time semantics
+
+The Isolation Forest is trained once from 2021-2024 FIRMS history and evaluated
+against unseen 2025 data. Production observations from 2026 onward call only the
+saved pipeline's `predict`/`score_samples` methods. Live ingestion never fits or
+re-trains the artifact, and startup validates the exact 16-column feature order.
+
+Every persisted pixel has two separate UTC timestamps. `acquisition_time` is the
+satellite observation time built from FIRMS `acq_date` + `acq_time`;
+`received_at` is when this service ingested it. Their difference is exposed as
+data latency. The default dashboard query uses `now in UTC - 24 hours`, not a
+calendar date boundary, and historical rows are retained after leaving that
+window.
+
+FIRMS confidence describes NASA's satellite observation. `model_confidence` is
+the normalized score from the saved Isolation Forest; every valid live pixel is
+scored using the saved pipeline's training-time missing-value handling, while
+the stricter baseline-eligibility flag remains available to the risk view. The
+API and dashboard keep FIRMS and model confidence distinct. A database-unique SHA-256 identity over sensor,
+coordinates, and acquisition time prevents repeated polling from inserting or
+alerting on the same pixel. New pixels join the nearest event within the
+configured radius and time gap. Every newly created event receives one in-app
+alert; the configured model threshold upgrades qualifying alerts to medium or
+high priority while low-confidence events remain low priority.
 
 - The source classifier is rule-based and explainable; it is not a validated
   production model.

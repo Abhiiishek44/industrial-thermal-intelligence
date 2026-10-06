@@ -222,17 +222,17 @@ body.light .home-sidebar { background: var(--surface); }
   /* Clears the two stacked Leaflet layer controls in the top-right corner. */
   position: fixed; top: 124px; right: 10px; z-index: 720;
   width: 44px; height: 44px; min-width: 44px; max-width: 44px; padding: 0;
-  display: grid; place-items: center; color: var(--text);
-  border: 1px solid #39424d; border-radius: 50%;
-  background: #171d24;
-  box-shadow: 0 3px 10px rgba(0,0,0,.3);
+  display: grid; place-items: center; color: #fff;
+  border: 1px solid rgba(255,255,255,.72); border-radius: 50%;
+  background: linear-gradient(145deg, #0891b2 8%, #0ea5a4 46%, #f97316 100%);
+  box-shadow: 0 4px 14px rgba(8,145,178,.3), 0 2px 8px rgba(249,115,22,.22);
   cursor: pointer; overflow: hidden;
   transition: background-color .14s, border-color .14s, box-shadow .14s;
 }
-body.light #ai-chat-launcher.ai-edge-launcher { background: #fff; border-color: #c9d0d8; color: #323a44; }
-#ai-chat-launcher.ai-edge-launcher:hover { border-color: #596574; background: #202832; box-shadow: 0 4px 12px rgba(0,0,0,.34); }
-#ai-chat-launcher.ai-edge-launcher:focus-visible { outline: 2px solid #8ea3b8; outline-offset: 2px; }
-.ai-edge-launcher-icon { width: 100%; height: 100%; display: grid; place-items: center; color: #c0cad5; }
+body.light #ai-chat-launcher.ai-edge-launcher { color: #fff; border-color: rgba(255,255,255,.9); background: linear-gradient(145deg, #0891b2 8%, #0ea5a4 46%, #f97316 100%); }
+#ai-chat-launcher.ai-edge-launcher:hover { border-color: #fff; background: linear-gradient(145deg, #06b6d4 8%, #14b8a6 46%, #fb923c 100%); box-shadow: 0 6px 18px rgba(8,145,178,.38), 0 3px 10px rgba(249,115,22,.26); transform: translateY(-1px); }
+#ai-chat-launcher.ai-edge-launcher:focus-visible { outline: 3px solid rgba(34,211,238,.42); outline-offset: 2px; }
+.ai-edge-launcher-icon { width: 100%; height: 100%; display: grid; place-items: center; color: #fff; }
 .assistant-mark svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .ai-edge-launcher-copy { display: none !important; }
 .ai-edge-launcher-copy strong { color: var(--text); font-size: 11px; font-weight: 720; letter-spacing: .01em; }
@@ -913,7 +913,7 @@ body.light .ai-chat-drawer { background: #fff; border-color: #dfe5ec; }
 }
 body.light .ai-chat-drawer-header { border-color: #e3e8ef; }
 .ai-chat-brand { display: flex; align-items: center; gap: 11px; }
-.ai-chat-brand-mark { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 10px; color: #b7c3cf; background: #1b232d; border: 1px solid #34404d; }
+.ai-chat-brand-mark { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 10px; color: #fff; background: linear-gradient(145deg, #0891b2, #f97316); border: 1px solid rgba(255,255,255,.45); box-shadow: 0 4px 12px rgba(8,145,178,.22); }
 .ai-chat-brand-mark.assistant-mark svg { width: 19px; height: 19px; }
 .ai-chat-brand > div { display: flex; flex-direction: column; gap: 2px; }
 .ai-chat-brand span:not(.ai-chat-brand-mark) { color: var(--text2); font-size: 8px; font-weight: 750; text-transform: uppercase; letter-spacing: .12em; }
@@ -931,7 +931,7 @@ body.light .ai-chat-context-bar { border-color: #e3e8ef; }
   flex-direction: column; gap: 10px; min-height: 0;
 }
 .chat-welcome { max-width: 280px; display: flex; flex-direction: column; align-items: center; color: var(--text2); text-align: center; margin: auto; padding: 22px 16px; }
-.chat-welcome-mark { width: 46px; height: 46px; display: grid; place-items: center; margin-bottom: 13px; border-radius: 12px; color: #b7c3cf; background: #1b232d; border: 1px solid #34404d; }
+.chat-welcome-mark { width: 46px; height: 46px; display: grid; place-items: center; margin-bottom: 13px; border-radius: 12px; color: #fff; background: linear-gradient(145deg, #0891b2, #0ea5a4 48%, #f97316); border: 1px solid rgba(255,255,255,.45); box-shadow: 0 5px 16px rgba(8,145,178,.2); }
 .chat-welcome-mark.assistant-mark svg { width: 22px; height: 22px; }
 .chat-welcome strong { color: var(--text); font-size: 15px; }
 .chat-welcome p { margin-top: 7px; font-size: 10px; line-height: 1.55; }
@@ -1910,10 +1910,21 @@ body.light .thermal-refresh-status { background: #f7fafb; }
 }
 .thermal-map-notice b { font-size: 11px; }
 .thermal-map-notice span { color: var(--text2); font-size: 9px; line-height: 1.4; }
-.thermal-detail-header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.thermal-detail-header {
+  position: sticky; z-index: 2; top: -15px; display: flex; justify-content: space-between;
+  gap: 12px; align-items: flex-start; margin: -15px -15px 0; padding: 15px;
+  border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 98%, transparent);
+  backdrop-filter: blur(12px);
+}
 .thermal-detail-header small { color: var(--accent); font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
 .thermal-detail-header h3 { margin: 4px 0 0; font: 600 12px/1.35 'JetBrains Mono', monospace; overflow-wrap: anywhere; }
-.thermal-detail-header button { border: 0; background: transparent; color: var(--text2); cursor: pointer; font-size: 22px; }
+.thermal-detail-close {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 5px 9px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--surface2); color: var(--text);
+  cursor: pointer; font: 700 10px/1 Inter, sans-serif; white-space: nowrap;
+}
+.thermal-detail-close b { font: 500 20px/1 Inter, sans-serif; color: var(--text2); }
+.thermal-detail-close:hover, .thermal-detail-close:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
 .thermal-detail-summary { display: grid; gap: 3px; margin: 13px 0 9px; padding: 10px 12px; border-left: 4px solid #6b7280; background: rgba(127,127,127,.08); }
 .thermal-detail-summary span { color: var(--text2); font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
 .thermal-detail-summary strong { text-transform: capitalize; }

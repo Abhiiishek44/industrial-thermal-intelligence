@@ -21,6 +21,7 @@ def run_chat_agent(
     history: list[dict],
     road_summary: list[dict] | None = None,
     analysis_mode: str | None = None,
+    retrieved_evidence: dict | None = None,
 ) -> Generator[str, None, None]:
     """Stream a chat response using the pre-computed summary as context.
 
@@ -30,6 +31,8 @@ def run_chat_agent(
         history:      Prior turns as [{"role": "user"|"assistant", "content": "..."}].
         road_summary: Road status list from fire_context.json (optional).
         analysis_mode: Selects the thermal-monitoring or wildfire assistant prompt.
+        retrieved_evidence: Authoritative region/timestep evidence retrieved directly
+            from the same prepared artifacts used by the dashboard and report pipeline.
 
     Yields:
         Text chunks.
@@ -41,7 +44,14 @@ def run_chat_agent(
         "Current industrial thermal intelligence report"
         if thermal_mode else "Current situational report"
     )
-    context_parts = [f"{context_label}:\n{summary}"] if summary else []
+    context_parts = []
+    if retrieved_evidence:
+        context_parts.append(
+            "AUTHORITATIVE RETRIEVED REGION AND OBSERVATION CONTEXT:\n"
+            + _json.dumps(retrieved_evidence, ensure_ascii=False, default=str)
+        )
+    if summary:
+        context_parts.append(f"{context_label}:\n{summary}")
     if road_summary:
         context_parts.append(f"Road status:\n{_json.dumps(road_summary, ensure_ascii=False)}")
 

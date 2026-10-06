@@ -32,12 +32,13 @@
   function updateHud(fireCtx, event, viewMode) {
     const thermal = (fireCtx && fireCtx.thermal) || {};
     const viewLabels = {
+      '24h': 'Last 24 Hours',
       '5d': '5-Day Activity',
       '30d': '30-Day Activity',
       replay: 'Observation Replay',
       persistent: 'Persistent Sources',
       risk: 'Risk Events',
-      anomalies: 'Thermal Anomalies',
+      anomalies: 'Live Thermal Anomalies',
       classification: 'Legacy Classification',
     };
     const viewLabel = viewLabels[viewMode || thermal.view_mode] || 'Thermal Monitoring';
@@ -143,7 +144,8 @@
     }, new Map()).values()).sort(function(left, right) {
       return String(left.name).localeCompare(String(right.name));
     });
-    const viewLabel = thermal.view_mode === 'classification' ? 'Legacy Classification'
+    const viewLabel = thermal.view_mode === '24h' ? 'Last 24 Hours'
+      : thermal.view_mode === 'classification' ? 'Legacy Classification'
       : thermal.view_mode === 'persistent' ? 'Persistent Sources'
       : thermal.view_mode === '30d' ? '30-Day Activity'
       : thermal.view_mode === '5d' ? '5-Day Activity'
@@ -170,8 +172,9 @@
     const totalHits = insideCount + nearCount;
 
     // Landcover distribution
-    const lcBare = landcover['bare'] || landcover['Bare land'] || 0;
-    const lcVeg = (landcover['cropland'] || 0) + (landcover['forest'] || 0) + (landcover['shrubland'] || 0);
+    const lcBare = (landcover['bare'] || 0) + (landcover['barren'] || 0) + (landcover['Bare land'] || 0);
+    const lcVeg = (landcover['vegetation'] || 0) + (landcover['agricultural'] || 0) +
+      (landcover['cropland'] || 0) + (landcover['forest'] || 0) + (landcover['shrubland'] || 0);
     const lcBuilt = landcover['built_up'] || landcover['Built-up'] || 0;
     const lcTotal = Math.max(1, lcBare + lcVeg + lcBuilt);
 
@@ -283,6 +286,7 @@
     const top = thermal.top_risk_event || {};
     const wf = weatherForecast || [];
     const facilities = industrialFacilities?.features || [];
+    const isLive = thermal.view_mode === 'anomalies';
     const agreementRate = stats.total_events
       ? Math.round((Number(stats.iforest_agreement_count || 0) / Number(stats.total_events)) * 100)
       : 0;
@@ -291,10 +295,11 @@
     };
     el.innerHTML =
       '<div class="data-card risk-overview-card">' +
-        '<div class="dash-card-title">Thermal Events</div>' +
-        '<div class="risk-primary-metric">' + vn(stats.total_events || 0) + '<small>historical events</small></div>' +
+        '<div class="dash-card-title">' + (isLive ? 'Live Thermal Anomalies' : 'Thermal Events') + '</div>' +
+        '<div class="risk-primary-metric">' + vn(stats.total_events || 0) + '<small>' + (isLive ? 'current scored events' : 'historical + live events') + '</small></div>' +
         detailRow('Critical', vn(stats.critical_events || 0)) +
         detailRow('High', vn(stats.high_events || 0)) +
+        (isLive ? detailRow('Latest observation', formatTime(stats.latest_live_observation)) : '') +
       '</div>' +
       '<div class="data-card">' +
         '<div class="dash-card-title">High Confidence Alerts</div>' +
@@ -312,7 +317,7 @@
         '<div class="dash-card-title">Model Agreement</div>' +
         '<div class="risk-primary-metric">' + vn(stats.iforest_agreement_count || 0) + '<small>Isolation Forest agreements</small></div>' +
         detailRow('Agreement share', agreementRate + '%') +
-        detailRow('Top event agreement', top.iforest_agreement ? 'Yes' : 'No') +
+        detailRow('Top event agreement', top.iforest_evaluated === false ? 'Not eligible' : (top.iforest_agreement ? 'Yes' : 'No')) +
       '</div>' +
       '<div class="data-card">' +
         '<div class="dash-card-title">Persistence</div>' +

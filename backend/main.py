@@ -2,7 +2,7 @@ import config  # loads .env variables
 import logging
 import os
 import time
-from flask import Flask
+from flask import Flask, Response
 from flask_cors import CORS
 from pathlib import Path
 from db.connection import db, get_db_uri
@@ -31,6 +31,7 @@ def create_app():
     from api.regions   import regions_bp
     from api.crowd     import crowd_bp
     from api.thermal   import thermal_bp
+    from api.fires     import fires_bp
 
     app.register_blueprint(auth_bp,      url_prefix='/auth')
     app.register_blueprint(events_bp,    url_prefix='/api/events')
@@ -40,9 +41,44 @@ def create_app():
     app.register_blueprint(regions_bp,   url_prefix='/api/regions')
     app.register_blueprint(crowd_bp,     url_prefix='/api/events')
     app.register_blueprint(thermal_bp,   url_prefix='/api/v1/thermal')
+    app.register_blueprint(fires_bp,     url_prefix='/api/fires')
 
     # ── Frontend routes ───────────────────────────────────────────────────────
     from flask import redirect, request, send_from_directory
+
+    @app.route('/openapi.yaml')
+    def openapi_spec():
+        """Serve the API contract consumed by the local Swagger UI."""
+        return send_from_directory(str(BASE_DIR.parent / 'docs'), 'api.yaml')
+
+    @app.route('/docs')
+    @app.route('/docs/')
+    def swagger_ui():
+        """Render interactive API documentation for the local server."""
+        return Response(
+            '''<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Wildfire Decision Support API</title>
+    <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+  </head>
+  <body>
+    <div id="swagger-ui"></div>
+    <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+    <script>
+      window.ui = SwaggerUIBundle({
+        url: '/openapi.yaml',
+        dom_id: '#swagger-ui',
+        deepLinking: true,
+        persistAuthorization: true,
+      });
+    </script>
+  </body>
+</html>''',
+            mimetype='text/html',
+        )
 
     @app.route('/')
     @app.route('/login')
@@ -208,7 +244,12 @@ if __name__ == '__main__':
                 "using prepared thermal intelligence artifacts ==="
             )
 
-        from pipeline.thermal.refresh import start_thermal_refresh_scheduler
+        from pipeline.thermal.refresh import (
+            bootstrap_cached_firms,
+            start_thermal_refresh_scheduler,
+        )
+        print("=== [thermal-live] Importing recent cached FIRMS detections ===")
+        bootstrap_cached_firms(app)
         start_thermal_refresh_scheduler(app)
 
     threading.Thread(target=_run_pipeline, daemon=True).start()

@@ -113,6 +113,18 @@
     async getIndiaThermalOverview() { return apiFetch('/api/events/thermal/overview'); },
     async getAoi(eid)        { return apiFetch('/api/events/' + eid + '/layers/aoi'); },
     async getRealtimeFirms(days) { return apiFetch('/api/firms/realtime' + (days ? '?days=' + days : '')); },
+    async getRecentFireDetections(hours, regionEventId) {
+      var params = new URLSearchParams({ hours: String(hours || 24) });
+      if (regionEventId != null) params.set('region_event_id', String(regionEventId));
+      return apiFetch('/api/fires/recent?' + params.toString());
+    },
+    async getRecentFireEvents(hours, regionEventId) {
+      var params = new URLSearchParams({ hours: String(hours || 24) });
+      if (regionEventId != null) params.set('region_event_id', String(regionEventId));
+      return apiFetch('/api/fires/events?' + params.toString());
+    },
+    async getFireStatus() { return apiFetch('/api/fires/status'); },
+    async getFireEvent(id) { return apiFetch('/api/fires/events/' + encodeURIComponent(id)); },
     async getEvent(id)       { return apiFetch('/api/events/' + id); },
     async getTimesteps(id)   { return apiFetch('/api/events/' + id + '/timesteps'); },
     async getThermalRefreshStatus(eid) {
@@ -130,10 +142,11 @@
       var query = '?days=' + encodeURIComponent(days) + '&end=' + encodeURIComponent(end);
       return apiFetch('/api/events/' + eid + '/thermal/classifications' + query);
     },
-    async getThermalStats(region, year) {
+    async getThermalStats(region, year, dataMode) {
       var params = new URLSearchParams();
       if (region) params.set('region', region);
       if (year) params.set('year', year);
+      if (dataMode) params.set('data_mode', dataMode);
       return apiFetch('/api/v1/thermal/stats' + (params.toString() ? '?' + params : ''));
     },
     async getThermalEvents(filters) {

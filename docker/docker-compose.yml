@@ -37,6 +37,7 @@ services:
       - ../backend:/app/backend
       - ../frontend:/app/frontend
       - ../data:/app/data
+      - ../models:/app/models:ro
       - ../tests:/app/tests:ro
 
 volumes:
