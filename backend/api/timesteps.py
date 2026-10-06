@@ -397,6 +397,21 @@ def _should_apply_chat_quota(payload: dict) -> bool:
     )
 
 
+def _report_metadata_is_current(metadata: dict) -> bool:
+    """Reject cached report context produced by an older schema or prompt."""
+    if not metadata:
+        return False
+
+    # Imported lazily because ts_data_routes imports this module to register its
+    # endpoints. At request time both modules are fully initialized.
+    from api.ts_data_routes import _PROMPT_VERSION, _REPORT_SCHEMA_VERSION
+
+    return (
+        metadata.get("schema_version") == _REPORT_SCHEMA_VERSION
+        and metadata.get("prompt_version") == _PROMPT_VERSION
+    )
+
+
 @timesteps_bp.route("/events/<int:event_id>/chat", methods=["POST"])
 @token_required
 def chat(event_id: int):
@@ -430,19 +445,65 @@ def chat(event_id: int):
     summary       = ""
     road_summary  = []
     analysis_mode = None
+    retrieved_evidence = {}
     if ts_id:
         result, _ = _get_event_and_ts(event_id, ts_id)
         if result:
             event_obj, ts_obj = result
             from pipeline.event_config import get_event_config
-            analysis_mode = get_event_config(event_obj).analysis_mode
+            event_config = get_event_config(event_obj)
+            analysis_mode = event_config.analysis_mode
             import pandas as _pd
             ts_str  = _pd.Timestamp(ts_obj.slot_time).strftime("%Y-%m-%dT%H%M")
             ai_dir  = (_DATA_DIR / "events" / f"{event_obj.year}_{event_obj.id:04d}"
                        / "timesteps" / ts_str / "AI_report")
-            # Build rich context for the chat agent from structured AI_report files
-            summary_data = _read_json(ai_dir / "summary.json") or {}
+            # Retrieve authoritative region and observation evidence directly from
+            # the same builder used by reports. Chat must not depend on a cached
+            # narrative report to know which region/timestep the dashboard shows.
+            from api.ts_data_routes import _report_evidence
+            evidence, population, retrieved_roads, _, _ = _report_evidence(event_obj, ts_obj)
+            if evidence:
+                retrieved_evidence = {
+                    "scope": "selected_region_and_observation",
+                    "event_id": event_obj.id,
+                    "timestep_id": ts_obj.id,
+                    "evidence": evidence,
+                    "population_exposure": population,
+                }
+                road_summary = retrieved_roads
+            else:
+                # Region identity remains available while a newly selected
+                # timestep's prediction artifact is still being prepared.
+                retrieved_evidence = {
+                    "scope": "selected_region_and_observation",
+                    "event_id": event_obj.id,
+                    "timestep_id": ts_obj.id,
+                    "observation_time": ts_obj.slot_time.isoformat(),
+                    "region": {
+                        "event_id": event_obj.id,
+                        "region_id": event_config.region_id,
+                        "name": event_obj.name,
+                        "state": event_config.state,
+                        "country_code": event_config.country_code,
+                        "monitoring_focus": event_config.monitoring_focus,
+                        "bbox": list(event_config.view_bbox or event_config.bbox),
+                    },
+                    "data_warnings": [
+                        "Prepared observation evidence is not yet available for this timestep."
+                    ],
+                }
+
+            # Add the optional generated report as secondary narrative context.
+            metadata = _read_json(ai_dir / "metadata.json") or {}
+            report_is_current = _report_metadata_is_current(metadata)
+            summary_data = (_read_json(ai_dir / "summary.json") or {}) if report_is_current else {}
             parts = []
+            if not report_is_current:
+                parts.append(
+                    "REPORT STATUS:\nNo current validated report is available for this "
+                    "observation. Do not infer observation facts from older reports or "
+                    "from regional historical totals."
+                )
             if summary_data.get("risk_level"):
                 parts.append("RISK LEVEL: " + summary_data["risk_level"])
             if summary_data.get("key_points"):
@@ -453,23 +514,17 @@ def chat(event_id: int):
                 parts.append("KEY RISKS:\n" + summary_data["key_risks"])
             if summary_data.get("immediate_actions"):
                 parts.append("IMMEDIATE ACTIONS:\n" + summary_data["immediate_actions"])
-            metadata = _read_json(ai_dir / "metadata.json") or {}
-            if metadata:
+            if report_is_current:
                 parts.append(
                     "REPORT PROVENANCE AND DATA AVAILABILITY:\n"
                     + __import__('json').dumps(metadata, ensure_ascii=False)
                 )
             for fname, label in (("risk", "RISK ANALYSIS"), ("impact", "IMPACT ANALYSIS"),
                                   ("evacuation", "EVACUATION ANALYSIS"), ("crowd", "CROWD INTELLIGENCE")):
-                d = _read_json(ai_dir / f"{fname}.json")
+                d = _read_json(ai_dir / f"{fname}.json") if report_is_current else {}
                 if d:
                     parts.append(f"{label}:\n{__import__('json').dumps(d, ensure_ascii=False)}")
             summary = "\n\n".join(parts)
-            # Road summary from spatial analysis roads.geojson
-            from api.ts_data_routes import _spatial_dir, _build_road_summary
-            roads_path    = _spatial_dir(event_obj.id, event_obj.year, ts_obj.slot_time) / "ML" / "roads.geojson"
-            roads_geojson = _read_json(roads_path) or {}
-            road_summary  = _build_road_summary(roads_geojson)
 
     # Keep the assistant identity correct even before a timestep has been selected.
     if analysis_mode is None:
@@ -484,7 +539,8 @@ def chat(event_id: int):
     return Response(
         stream_with_context(run_chat_agent(summary=summary, road_summary=road_summary,
                                            message=message, history=history,
-                                           analysis_mode=analysis_mode)),
+                                           analysis_mode=analysis_mode,
+                                           retrieved_evidence=retrieved_evidence)),
         mimetype="text/plain",
     )
 

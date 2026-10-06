@@ -6,8 +6,19 @@
 (function() {
   let homeMap  = null;
   let eventMap = null;
-  // Light mode is the predictable default for every fresh load.
-  let darkMode = false;
+  const THEME_STORAGE_KEY = 'wildfire:theme';
+
+  function _storedDarkMode() {
+    try {
+      return window.localStorage.getItem(THEME_STORAGE_KEY) === 'dark';
+    } catch (error) {
+      return false;
+    }
+  }
+
+  // Light remains the default for a first visit; subsequent loads restore the
+  // user's explicit theme selection.
+  let darkMode = _storedDarkMode();
   let allEvents = [];
   let currentEvent = null;
   let currentWeather = [];   // [{hour, temp_c, rh, wind_speed_kmh, wind_dir}]
@@ -21,11 +32,30 @@
   let _isAdmin            = false;  // set after authentication
   let _syncPushInterval   = null;   // admin: pushes virtual time to server every 10s
   let _initialReplayFloor = null;   // protects the richer event-1 default from a stale saved clock
-  let _thermalViewMode    = 'risk';             // anomaly/risk prioritization is the default
+  const THERMAL_VIEW_STORAGE_KEY = 'wildfire:thermal-view-mode';
+  const THERMAL_VIEW_MODES = new Set([
+    '24h', '5d', '30d', 'replay', 'persistent', 'risk', 'anomalies', 'classification',
+  ]);
+
+  function _storedThermalViewMode() {
+    try {
+      var saved = window.localStorage.getItem(THERMAL_VIEW_STORAGE_KEY);
+      if (THERMAL_VIEW_MODES.has(saved)) return saved;
+    } catch (error) {}
+    return '24h';
+  }
+
+  let _thermalViewMode    = _storedThermalViewMode();
   let _thermalRiskFilter  = 'high_critical';
   let _thermalRefreshPoll = null;
   let _thermalLastObservedMs = null;
-  const THERMAL_STATUS_POLL_MS = 5 * 60 * 1000;
+  let _thermalViewRequestSeq = 0;
+  let _eventRequestSeq = 0;
+  let _selectedTimestepId = null;
+  let _thermalWeatherForecast = [];
+  let _thermalWindForecast = [];
+  let _thermalWeatherTimestepId = null;
+  const THERMAL_STATUS_POLL_MS = 30 * 1000;
 
   // ── Boot ─────────────────────────────────────────────────────────────────────
 
@@ -215,6 +245,9 @@
 
   async function openEvent(ev, fromPopstate) {
     if (!ev) return;
+    const eventRequestSeq = ++_eventRequestSeq;
+    // Invalidate map/dashboard requests that may still be resolving for the
+    // previously selected region.
     _stopThermalRefreshPolling();
     Object.keys(_pollIntervals || {}).forEach(function(id) {
       clearInterval(_pollIntervals[id]);
@@ -227,6 +260,7 @@
     if (_syncPushInterval) { clearInterval(_syncPushInterval); _syncPushInterval = null; }
     if (window._syncRefetchInterval) { clearInterval(window._syncRefetchInterval); window._syncRefetchInterval = null; }
     currentEvent = ev;
+    _selectedTimestepId = null;
     eventMap.setMonitoringFocus(ev.monitoring_focus);
     _applyAnalysisMode(ev);
     try { window.localStorage.setItem('wildfire:selected-event-id', String(ev.id)); } catch (e) {}
@@ -248,6 +282,9 @@
     document.getElementById('breadcrumb').textContent = ev.name + ' · ' + ev.year;
 
     eventMap.clearLayers();
+    _thermalWeatherForecast = [];
+    _thermalWindForecast = [];
+    _thermalWeatherTimestepId = null;
     if (window.CrowdPanel) window.CrowdPanel.setEvent(ev.id, eventMap);
     showView('event', function() {
       if (ev.bbox) eventMap.fitToBbox(ev.bbox);
@@ -262,10 +299,13 @@
     try {
       await loadTimesteps(ev.id);
     } finally {
-      _hideEventLoading();
-      if (selector) selector.disabled = false;
-      _refreshDevWindowState();
+      if (eventRequestSeq === _eventRequestSeq && currentEvent && currentEvent.id === ev.id) {
+        _hideEventLoading();
+        if (selector) selector.disabled = false;
+        _refreshDevWindowState();
+      }
     }
+    if (eventRequestSeq !== _eventRequestSeq || !currentEvent || currentEvent.id !== ev.id) return;
     if (ev.analysis_mode === 'thermal_monitoring') {
       _startThermalRefreshPolling(ev.id);
     }
@@ -350,10 +390,12 @@
     document.getElementById('thermal-view-title')?.classList.toggle('hidden', !thermal);
     document.getElementById('thermal-view-section')?.classList.toggle('hidden', !thermal);
     if (thermal) {
-      _thermalViewMode = 'risk';
-      var defaultView = document.querySelector('input[name="thermal-view"][value="risk"]');
-      if (defaultView) defaultView.checked = true;
-      _renderThermalLegend('risk');
+      _thermalViewMode = _storedThermalViewMode();
+      var savedView = document.querySelector(
+        'input[name="thermal-view"][value="' + _thermalViewMode + '"]',
+      );
+      if (savedView) savedView.checked = true;
+      _renderThermalLegend(_thermalViewMode);
     }
 
     var dashboardTitle = document.querySelector('#bottom-header .bottom-title');
@@ -376,7 +418,16 @@
     var legend = document.getElementById('event-legend');
     if (!legend) return;
     var forest = currentEvent && currentEvent.monitoring_focus === 'forest';
-    if (mode === 'risk' || mode === 'anomalies') {
+    if (mode === '24h') {
+      legend.innerHTML =
+        '<div class="leg-row"><b>Marker color · model confidence</b></div>' +
+        '<div class="leg-row"><span class="leg-swatch" style="background:#dc2626;opacity:.9"></span>Very high</div>' +
+        '<div class="leg-row"><span class="leg-swatch" style="background:#f97316;opacity:.9"></span>High</div>' +
+        '<div class="leg-row"><span class="leg-swatch" style="background:#eab308;opacity:.9"></span>Moderate</div>' +
+        '<div class="leg-row"><span class="leg-swatch" style="background:#64748b;opacity:.9"></span>Low</div>' +
+        '<div class="leg-row"><span class="leg-swatch" style="background:#94a3b8;opacity:.9"></span>Not evaluated</div>' +
+        '<div class="leg-row"><small>Marker size represents detection count. NEW/ACTIVE is event status, not confidence.</small></div>';
+    } else if (mode === 'risk' || mode === 'anomalies') {
       legend.innerHTML =
         '<div class="leg-row"><span class="leg-swatch" style="background:#dc2626;opacity:.9"></span>Critical risk</div>' +
         '<div class="leg-row"><span class="leg-swatch" style="background:#f97316;opacity:.9"></span>High risk</div>' +
@@ -419,25 +470,19 @@
       input.addEventListener('change', function() {
         if (!input.checked) return;
         _thermalViewMode = input.value;
+        try { window.localStorage.setItem(THERMAL_VIEW_STORAGE_KEY, _thermalViewMode); } catch (error) {}
         if (_thermalViewMode === 'anomalies') {
           _thermalRiskFilter = 'all';
           var riskFilter = document.getElementById('thermal-risk-filter');
           if (riskFilter) riskFilter.value = 'all';
         }
         _renderThermalLegend(_thermalViewMode);
-        if (_currentTsIndex >= 0 && _timestepsDone[_currentTsIndex]) {
-          selectTimestep(_timestepsDone[_currentTsIndex], false);
-        } else if (_thermalViewMode === 'risk' || _thermalViewMode === 'anomalies') {
-          _loadPreparedRiskOverview();
-        }
+        _loadSelectedThermalView();
       });
     });
     document.getElementById('thermal-risk-filter')?.addEventListener('change', function(event) {
       _thermalRiskFilter = event.target.value;
-      if ((_thermalViewMode === 'risk' || _thermalViewMode === 'anomalies') &&
-          _currentTsIndex >= 0 && _timestepsDone[_currentTsIndex]) {
-        selectTimestep(_timestepsDone[_currentTsIndex], false);
-      } else if (_thermalViewMode === 'risk' || _thermalViewMode === 'anomalies') {
+      if (_thermalViewMode === 'risk' || _thermalViewMode === 'anomalies') {
         _loadPreparedRiskOverview();
       }
     });
@@ -454,6 +499,137 @@
     return _thermalViewMode === 'anomalies' ? 'live' : undefined;
   }
 
+  async function _loadThermalWeather(eventId, ts) {
+    if (!ts) return { forecast: [], wind: [] };
+    if (_thermalWeatherTimestepId === ts.id) {
+      return {
+        forecast: _thermalWeatherForecast,
+        wind: _thermalWindForecast,
+      };
+    }
+    var results = await Promise.allSettled([
+      window.API.getWeather(eventId, ts.id),
+      window.API.getWindField(eventId, ts.id),
+    ]);
+    if (currentEvent && currentEvent.id === eventId) {
+      _thermalWeatherTimestepId = ts.id;
+      _thermalWeatherForecast = results[0].status === 'fulfilled' ? results[0].value : [];
+      _thermalWindForecast = results[1].status === 'fulfilled' ? results[1].value : [];
+    }
+    return {
+      forecast: results[0].status === 'fulfilled' ? results[0].value : [],
+      wind: results[1].status === 'fulfilled' ? results[1].value : [],
+    };
+  }
+
+  async function _loadSelectedThermalView() {
+    if (!currentEvent || currentEvent.analysis_mode !== 'thermal_monitoring') return;
+    if (_thermalViewMode === '24h') return _loadRecentFireOverview();
+    if (_thermalViewMode === 'risk' || _thermalViewMode === 'anomalies') {
+      return _loadPreparedRiskOverview();
+    }
+
+    var ts = _currentTsIndex >= 0 ? _timestepsDone[_currentTsIndex] : null;
+    if (!ts) return;
+    var mode = _thermalViewMode;
+    var eventId = currentEvent.id;
+    var requestSeq = ++_thermalViewRequestSeq;
+    var end = ts.nearest_t1 || ts.slot_time;
+    var activityRequest = mode === 'persistent'
+      ? window.API.getPersistentThermalSources(eventId, 30, end)
+      : mode === 'classification'
+      ? window.API.getThermalClassifications(eventId, 30, end)
+      : window.API.getThermalDetections(
+          eventId,
+          mode === '30d' ? 30 : 5,
+          end,
+        );
+    var rawObservationsRequest = mode === 'classification'
+      ? window.API.getThermalDetections(eventId, 30, end)
+      : Promise.resolve({ type: 'FeatureCollection', features: [] });
+    var results = await Promise.allSettled([
+      activityRequest,
+      window.API.getFireContext(eventId, ts.id),
+      window.API.getIndustrialFacilities(eventId),
+      rawObservationsRequest,
+      _loadThermalWeather(eventId, ts),
+    ]);
+    if (
+      requestSeq !== _thermalViewRequestSeq
+      || mode !== _thermalViewMode
+      || !currentEvent
+      || currentEvent.id !== eventId
+    ) return;
+    var activity = results[0].status === 'fulfilled'
+      ? results[0].value
+      : { type: 'FeatureCollection', features: [] };
+    var context = results[1].status === 'fulfilled' ? results[1].value : null;
+    var facilities = results[2].status === 'fulfilled'
+      ? results[2].value
+      : { type: 'FeatureCollection', features: [] };
+    var weather = results[4].status === 'fulfilled'
+      ? results[4].value
+      : { forecast: [], wind: [] };
+    if (mode === 'persistent') eventMap.renderPersistentSources(activity);
+    else if (mode === 'classification') {
+      eventMap.renderClassifiedSources(
+        activity,
+        results[3].status === 'fulfilled' ? results[3].value : null,
+      );
+    } else eventMap.renderHotspots(activity);
+    eventMap.renderIndustrialFacilities(facilities);
+    context = _mergeThermalActivity(context, activity);
+    window.Dashboard.renderDashboard(null, context, weather.forecast, facilities);
+    window.Dashboard.updateHud(context, currentEvent, mode);
+    window.Dashboard.updateWeather(weather.forecast);
+    eventMap.loadWindField(weather.wind);
+  }
+
+  async function _loadRecentFireOverview() {
+    if (!currentEvent || currentEvent.analysis_mode !== 'thermal_monitoring') return;
+    var eventId = currentEvent.id;
+    var requestSeq = ++_thermalViewRequestSeq;
+    var ts = _currentTsIndex >= 0 ? _timestepsDone[_currentTsIndex] : null;
+    var results = await Promise.allSettled([
+      window.API.getRecentFireEvents(24, eventId),
+      window.API.getFireStatus(),
+      window.API.getIndustrialFacilities(eventId),
+      _loadThermalWeather(eventId, ts),
+    ]);
+    if (
+      requestSeq !== _thermalViewRequestSeq
+      || !currentEvent
+      || currentEvent.id !== eventId
+      || _thermalViewMode !== '24h'
+    ) return;
+    var events = results[0].status === 'fulfilled'
+      ? results[0].value
+      : { type: 'FeatureCollection', features: [] };
+    var status = results[1].status === 'fulfilled' ? results[1].value : { status: 'failed' };
+    var facilities = results[2].status === 'fulfilled'
+      ? results[2].value
+      : { type: 'FeatureCollection', features: [] };
+    var weather = results[3].status === 'fulfilled'
+      ? results[3].value
+      : { forecast: [], wind: [] };
+    eventMap.renderRecentFireEvents(events);
+    eventMap.renderIndustrialFacilities(facilities);
+    _renderThermalRefreshStatus({
+      status: status.status,
+      last_success_at: status.last_successful_sync,
+      last_observed_at: status.last_observed_at,
+      interval_hours: Number(status.poll_interval_minutes || 15) / 60,
+    });
+    var context = _mergeThermalActivity(
+      { analysis_mode: 'thermal_monitoring', fire: {}, thermal: {} },
+      events,
+    );
+    window.Dashboard.renderDashboard(null, context, weather.forecast, facilities);
+    window.Dashboard.updateHud(context, currentEvent, _thermalViewMode);
+    window.Dashboard.updateWeather(weather.forecast);
+    eventMap.loadWindField(weather.wind);
+  }
+
   function _renderThermalRefreshStatus(status) {
     var el = document.getElementById('thermal-refresh-status');
     if (!el) return;
@@ -468,6 +644,9 @@
     if (state === 'running') {
       el.className = 'thermal-refresh-status updating';
       el.textContent = '↻ Updating FIRMS data…';
+    } else if (state === 'bootstrapping') {
+      el.className = 'thermal-refresh-status updating';
+      el.textContent = '↻ Importing recent cached FIRMS observations…';
     } else if (state === 'failed' || stale) {
       el.className = 'thermal-refresh-status stale';
       var latest = observed ? 'latest local detection ' + fmtDateTime(observed) : 'no local detection available';
@@ -477,7 +656,7 @@
       el.className = 'thermal-refresh-status ' + (observationAge ? 'stale' : 'live');
       var checked = refreshed ? 'checked ' + fmtDateTime(refreshed) + ' · ' : '';
       el.textContent = '● NRT · ' + checked + 'no newer observations · latest ' + (observed ? fmtDateTime(observed) : 'unavailable');
-    } else if (state === 'succeeded') {
+    } else if (state === 'succeeded' || state === 'ready') {
       el.className = 'thermal-refresh-status live';
       var refreshLabel = refreshed ? 'refreshed ' + fmtDateTime(refreshed) + ' · ' : '';
       el.textContent = '● NRT · ' + refreshLabel + (observed ? 'latest detection ' + fmtDateTime(observed) : 'no detections in the latest refresh');
@@ -506,6 +685,20 @@
     var poll = async function() {
       if (!currentEvent || currentEvent.id !== eventId) return;
       try {
+        if (_thermalViewMode === '24h') {
+          var liveResults = await Promise.all([
+            window.API.getRecentFireEvents(24, eventId),
+            window.API.getFireStatus(),
+          ]);
+          eventMap.renderRecentFireEvents(liveResults[0]);
+          _renderThermalRefreshStatus({
+            status: liveResults[1].status,
+            last_success_at: liveResults[1].last_successful_sync,
+            last_observed_at: liveResults[1].last_observed_at,
+            interval_hours: Number(liveResults[1].poll_interval_minutes || 15) / 60,
+          });
+          return;
+        }
         var status = await window.API.getThermalRefreshStatus(eventId);
         _renderThermalRefreshStatus(status);
         var observedMs = status.last_observed_at
@@ -532,7 +725,12 @@
   }
 
   function _mergeThermalActivity(fireCtx, geojson) {
-    if (!fireCtx || !geojson || !Array.isArray(geojson.features)) return fireCtx;
+    if (!geojson || !Array.isArray(geojson.features)) return fireCtx;
+    // Cumulative/live views are valid independently of the per-timestep
+    // prediction artifact. On a newly ingested observation that artifact may
+    // still be building, so retain a complete dashboard context from the view
+    // response instead of leaving the dashboard blank after a reload.
+    fireCtx = fireCtx || { analysis_mode: 'thermal_monitoring', fire: {}, thermal: {} };
     var features = geojson.features;
     var frpValues = features.map(function(feature) {
       var properties = feature.properties || {};
@@ -559,6 +757,32 @@
         return counts;
       }, {});
     };
+    var sumProperty = function(aggregateProperty, booleanProperty) {
+      return features.reduce(function(total, feature) {
+        var properties = feature.properties || {};
+        if (properties[aggregateProperty] != null) {
+          return total + Number(properties[aggregateProperty] || 0);
+        }
+        return total + (Boolean(properties[booleanProperty]) ? 1 : 0);
+      }, 0);
+    };
+    var mergeCounts = function(aggregateProperty, scalarProperty) {
+      return features.reduce(function(counts, feature) {
+        var properties = feature.properties || {};
+        var aggregate = properties[aggregateProperty];
+        if (aggregate && typeof aggregate === 'object') {
+          Object.keys(aggregate).forEach(function(key) {
+            counts[key] = (counts[key] || 0) + Number(aggregate[key] || 0);
+          });
+        } else {
+          var value = properties[scalarProperty];
+          if (value != null && value !== '') {
+            counts[String(value)] = (counts[String(value)] || 0) + 1;
+          }
+        }
+        return counts;
+      }, {});
+    };
     var uniqueValues = function(property) {
       return Array.from(new Set(features.map(function(feature) {
         return (feature.properties || {})[property];
@@ -578,10 +802,16 @@
       frp_mean_mw: frpValues.length ? Number((totalFrp / frpValues.length).toFixed(3)) : null,
       frp_max_mw: frpValues.length ? Math.max.apply(null, frpValues) : null,
       brightness_ti4_max_k: brightnessValues.length ? Math.max.apply(null, brightnessValues) : null,
-      inside_industrial_area_count: countTruthy('inside_industrial_polygon'),
-      near_industrial_facility_count: countTruthy('near_industrial_facility'),
+      inside_industrial_area_count: sumProperty(
+        'inside_industrial_area_count', 'inside_industrial_polygon'
+      ),
+      near_industrial_facility_count: sumProperty(
+        'near_industrial_facility_count', 'near_industrial_facility'
+      ),
       confidence_counts: countValues('confidence'),
-      landcover_group_counts: countValues('landcover_group'),
+      landcover_group_counts: mergeCounts(
+        'landcover_group_counts', 'landcover_group'
+      ),
       satellites: uniqueValues('satellite'),
       nearest_industries: uniqueValues('nearest_industry_name'),
       view_mode: (geojson.metadata && geojson.metadata.view) || _thermalViewMode,
@@ -642,6 +872,10 @@
 
   async function _loadPreparedRiskOverview() {
     if (!currentEvent || currentEvent.analysis_mode !== 'thermal_monitoring') return;
+    var eventId = currentEvent.id;
+    var mode = _thermalViewMode;
+    var requestSeq = ++_thermalViewRequestSeq;
+    var ts = _currentTsIndex >= 0 ? _timestepsDone[_currentTsIndex] : null;
     var filter = {
       region: currentEvent.region_id,
       risk_level: _riskLevelsForFilter(),
@@ -652,8 +886,15 @@
       window.API.getThermalMap(filter),
       window.API.getThermalStats(currentEvent.region_id, null, _thermalDataMode()),
       window.API.getThermalEvents(Object.assign({}, filter, { limit: 1 })),
-      window.API.getIndustrialFacilities(currentEvent.id),
+      window.API.getIndustrialFacilities(eventId),
+      _loadThermalWeather(eventId, ts),
     ]);
+    if (
+      requestSeq !== _thermalViewRequestSeq
+      || !currentEvent
+      || currentEvent.id !== eventId
+      || _thermalViewMode !== mode
+    ) return;
     var mapPayload = results[0].status === 'fulfilled'
       ? results[0].value
       : { events: [], error: 'Risk-event data could not be loaded. Please retry.' };
@@ -662,11 +903,16 @@
     var facilities = results[3].status === 'fulfilled'
       ? results[3].value
       : { type: 'FeatureCollection', features: [] };
+    var weather = results[4].status === 'fulfilled'
+      ? results[4].value
+      : { forecast: [], wind: [] };
     eventMap.renderThermalRiskEvents(mapPayload);
     eventMap.renderIndustrialFacilities(facilities);
     var context = _mergeThermalRisk(null, mapPayload, stats, top);
-    window.Dashboard.renderDashboard(null, context, [], facilities);
+    window.Dashboard.renderDashboard(null, context, weather.forecast, facilities);
     window.Dashboard.updateHud(context, currentEvent, _thermalViewMode);
+    window.Dashboard.updateWeather(weather.forecast);
+    eventMap.loadWindField(weather.wind);
   }
 
   // ── Timesteps ─────────────────────────────────────────────────────────────────
@@ -682,6 +928,7 @@
       container.innerHTML = '<div class="empty-msg">Failed to load timesteps</div>';
       return;
     }
+    if (!currentEvent || currentEvent.id !== eventId) return;
 
     // Use all slots (pending ones trigger on-demand build when selected)
     const done = timesteps;
@@ -796,7 +1043,11 @@
       }, 1000);
     }
 
-    selectTimestep(done[initialIdx]);
+    // Do not declare the event loaded until the restored view has finished
+    // loading both its map layers and dashboard data. This is especially
+    // important after a refresh, when the latest observation may still be
+    // completing its per-timestep prediction artifacts.
+    await selectTimestep(done[initialIdx]);
     if (currentEvent && currentEvent.analysis_mode === 'thermal_monitoring') {
       // Keep the monitoring dashboard on the latest data. Replay remains
       // available through the timestep controls when the user requests it.
@@ -1044,6 +1295,17 @@
     if (!currentEvent) return;
     const eid  = currentEvent.id;
     const tsid = ts.id;
+    const thermalMode = _thermalViewMode;
+    const thermalViewSeq = ++_thermalViewRequestSeq;
+    _selectedTimestepId = tsid;
+
+    function requestIsCurrent() {
+      return currentEvent
+        && currentEvent.id === eid
+        && String(_selectedTimestepId) === String(tsid)
+        && _thermalViewMode === thermalMode
+        && _thermalViewRequestSeq === thermalViewSeq;
+    }
 
     // On mobile, close the left-panel sheet after picking a timestep
     if (window._mobileClosePanel) window._mobileClosePanel();
@@ -1071,6 +1333,7 @@
     var timestepDone = ts.prediction_status === 'done' && ts.spatial_analysis_status === 'done';
     if (notifyBackend !== false) {
       window.API.runPredictionStep(eid, tsid).catch(function(err) {
+        if (!requestIsCurrent()) return;
         if (timestepDone) return;
         clearInterval(_pollIntervals[tsid]);
         delete _pollIntervals[tsid];
@@ -1093,6 +1356,7 @@
 
     // Enable/disable crowd radio based on whether crowd prediction exists for this timestep
     window.API.getTsStatus(eid, tsid).then(function(s) {
+      if (!requestIsCurrent()) return;
       var crowdReady = s.crowd_prediction_status === 'done' && s.spatial_crowd_status === 'done';
       _setCrowdRadio(crowdReady);
       window.AIModal?.setCrowdAvailable(crowdReady);
@@ -1105,6 +1369,7 @@
         _updateRiskLegend();
       }
     }).catch(function() {
+      if (!requestIsCurrent()) return;
       _setCrowdRadio(false);
       window.AIModal?.setCrowdAvailable(false);
     });
@@ -1127,7 +1392,9 @@
 
     var thermalActivityRequest = null;
     if (currentEvent.analysis_mode === 'thermal_monitoring' && _thermalViewMode !== 'replay') {
-      thermalActivityRequest = (_thermalViewMode === 'risk' || _thermalViewMode === 'anomalies')
+      thermalActivityRequest = _thermalViewMode === '24h'
+        ? window.API.getRecentFireEvents(24, eid)
+        : (_thermalViewMode === 'risk' || _thermalViewMode === 'anomalies')
         ? window.API.getThermalMap({
             region: currentEvent.region_id,
             risk_level: _riskLevelsForFilter(),
@@ -1154,7 +1421,7 @@
       : Promise.resolve({ type: 'FeatureCollection', features: [] });
 
     // Map layers (non-blocking)
-    Promise.allSettled([
+    var mapLoadPromise = Promise.allSettled([
       window.API.getPerimeter(eid, tsid, _crowdMode),
       hotspotRequest,
       window.API.getRiskZones(eid, tsid, _crowdMode),
@@ -1163,9 +1430,11 @@
       classificationObservationsRequest,
       industrialFacilitiesRequest,
     ]).then(function(r) {
+      if (!requestIsCurrent()) return;
       if (r[0].status === 'fulfilled') eventMap.renderPerimeter(r[0].value);
       if (r[1].status === 'fulfilled') {
-        if (_thermalViewMode === 'risk' || _thermalViewMode === 'anomalies') eventMap.renderThermalRiskEvents(r[1].value);
+        if (_thermalViewMode === '24h') eventMap.renderRecentFireEvents(r[1].value);
+        else if (_thermalViewMode === 'risk' || _thermalViewMode === 'anomalies') eventMap.renderThermalRiskEvents(r[1].value);
         else if (_thermalViewMode === 'persistent') eventMap.renderPersistentSources(r[1].value);
         else if (_thermalViewMode === 'classification') eventMap.renderClassifiedSources(
           r[1].value,
@@ -1191,7 +1460,7 @@
     }
 
     // Dashboard + Weather: all together so weather renders into already-created DOM
-    Promise.allSettled([
+    var dashboardLoadPromise = Promise.allSettled([
       window.API.getAnalysis(eid, tsid),
       window.API.getFireContext(eid, tsid),
       window.API.getWeather(eid, tsid),
@@ -1210,8 +1479,14 @@
           })
         : Promise.resolve(null),
     ]).then(function(r) {
+      if (!requestIsCurrent()) return;
       var forecast  = r[2].status === 'fulfilled' ? r[2].value : [];
       var windHours = r[3].status === 'fulfilled' ? r[3].value : [];
+      if (currentEvent.analysis_mode === 'thermal_monitoring') {
+        _thermalWeatherTimestepId = tsid;
+        _thermalWeatherForecast = forecast;
+        _thermalWindForecast = windHours;
+      }
       // renderDashboard first (creates the DOM elements), then update weather into them
       var fireContext = r[1].status === 'fulfilled' ? r[1].value : null;
       if (thermalActivityRequest && r[4].status === 'fulfilled') {
@@ -1243,6 +1518,10 @@
       _initForecastSlider(forecast);
       window.AIModal.renderCard();
     });
+
+    // Keep callers (notably the initial/reload path) in a loading state until
+    // all visible data for this exact event, timestep, and saved view settles.
+    await Promise.allSettled([mapLoadPromise, dashboardLoadPromise]);
   }
 
   // ── Left panel collapse ───────────────────────────────────────────────────────
@@ -1302,6 +1581,9 @@
       : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
     btn.addEventListener('click', function() {
       darkMode = !darkMode;
+      try {
+        window.localStorage.setItem(THEME_STORAGE_KEY, darkMode ? 'dark' : 'light');
+      } catch (error) {}
       document.body.classList.toggle('light', !darkMode);
       document.body.classList.toggle('dark',   darkMode);
       btn.innerHTML = darkMode

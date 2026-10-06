@@ -25,9 +25,70 @@ def setup_db(app) -> None:
         _migrate_users(db)        # must run before create_all (updates legacy auth schemas)
         db.create_all()
         _ensure_event_timestep_unique_index(db)
+        _migrate_live_fire_monitoring(db)
         _migrate_field_reports(db)
         _migrate_fire_events(db)
         seed_db()
+
+
+def _migrate_live_fire_monitoring(db) -> None:
+    """Add durable NRT constraints/indexes to new or previously-created tables."""
+    from sqlalchemy import inspect, text
+
+    tables = set(inspect(db.engine).get_table_names())
+    if not {"fire_detections", "monitoring_fire_events", "fire_alerts"}.issubset(tables):
+        return
+    inspector = inspect(db.engine)
+    detection_columns = {
+        column["name"] for column in inspector.get_columns("fire_detections")
+    }
+    event_columns = {
+        column["name"] for column in inspector.get_columns("monitoring_fire_events")
+    }
+    with db.engine.begin() as conn:
+        if "monitoring_region_id" not in event_columns:
+            conn.execute(text(
+                "ALTER TABLE monitoring_fire_events ADD COLUMN "
+                "monitoring_region_id INTEGER REFERENCES fire_events(id)"
+            ))
+        if "monitoring_region_id" not in detection_columns:
+            conn.execute(text(
+                "ALTER TABLE fire_detections ADD COLUMN "
+                "monitoring_region_id INTEGER REFERENCES fire_events(id)"
+            ))
+        if "landcover_group" not in detection_columns:
+            conn.execute(text(
+                "ALTER TABLE fire_detections ADD COLUMN landcover_group VARCHAR(32)"
+            ))
+        if "inside_industrial_polygon" not in detection_columns:
+            conn.execute(text(
+                "ALTER TABLE fire_detections ADD COLUMN inside_industrial_polygon BOOLEAN"
+            ))
+        if "near_industrial_facility" not in detection_columns:
+            conn.execute(text(
+                "ALTER TABLE fire_detections ADD COLUMN near_industrial_facility BOOLEAN"
+            ))
+    statements = (
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_fire_detections_detection_key "
+        "ON fire_detections (detection_key)",
+        "CREATE INDEX IF NOT EXISTS ix_fire_detections_acquisition_time "
+        "ON fire_detections (acquisition_time)",
+        "CREATE INDEX IF NOT EXISTS ix_fire_detections_event_id "
+        "ON fire_detections (fire_event_id)",
+        "CREATE INDEX IF NOT EXISTS ix_fire_detections_region "
+        "ON fire_detections (monitoring_region_id)",
+        "CREATE INDEX IF NOT EXISTS ix_fire_detections_location_gist "
+        "ON fire_detections USING GIST (location)",
+        "CREATE INDEX IF NOT EXISTS ix_monitoring_fire_events_location_gist "
+        "ON monitoring_fire_events USING GIST (location)",
+        "CREATE INDEX IF NOT EXISTS ix_monitoring_fire_events_region "
+        "ON monitoring_fire_events (monitoring_region_id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_fire_alerts_deduplication_key "
+        "ON fire_alerts (deduplication_key)",
+    )
+    with db.engine.begin() as conn:
+        for statement in statements:
+            conn.execute(text(statement))
 
 
 def _migrate_field_reports(db) -> None:

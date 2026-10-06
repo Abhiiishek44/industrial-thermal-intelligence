@@ -32,6 +32,7 @@
   function updateHud(fireCtx, event, viewMode) {
     const thermal = (fireCtx && fireCtx.thermal) || {};
     const viewLabels = {
+      '24h': 'Last 24 Hours',
       '5d': '5-Day Activity',
       '30d': '30-Day Activity',
       replay: 'Observation Replay',
@@ -143,7 +144,8 @@
     }, new Map()).values()).sort(function(left, right) {
       return String(left.name).localeCompare(String(right.name));
     });
-    const viewLabel = thermal.view_mode === 'classification' ? 'Legacy Classification'
+    const viewLabel = thermal.view_mode === '24h' ? 'Last 24 Hours'
+      : thermal.view_mode === 'classification' ? 'Legacy Classification'
       : thermal.view_mode === 'persistent' ? 'Persistent Sources'
       : thermal.view_mode === '30d' ? '30-Day Activity'
       : thermal.view_mode === '5d' ? '5-Day Activity'
@@ -170,8 +172,9 @@
     const totalHits = insideCount + nearCount;
 
     // Landcover distribution
-    const lcBare = landcover['bare'] || landcover['Bare land'] || 0;
-    const lcVeg = (landcover['cropland'] || 0) + (landcover['forest'] || 0) + (landcover['shrubland'] || 0);
+    const lcBare = (landcover['bare'] || 0) + (landcover['barren'] || 0) + (landcover['Bare land'] || 0);
+    const lcVeg = (landcover['vegetation'] || 0) + (landcover['agricultural'] || 0) +
+      (landcover['cropland'] || 0) + (landcover['forest'] || 0) + (landcover['shrubland'] || 0);
     const lcBuilt = landcover['built_up'] || landcover['Built-up'] || 0;
     const lcTotal = Math.max(1, lcBare + lcVeg + lcBuilt);
 

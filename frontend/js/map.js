@@ -48,6 +48,15 @@
   };
 
   const _LIGHT_BASES = new Set(['Light', 'OSM', 'Topo']);
+  const BASEMAP_STORAGE_KEY = 'wildfire:event-basemap';
+
+  function storedBasemapName(baseTiles) {
+    try {
+      const saved = window.localStorage.getItem(BASEMAP_STORAGE_KEY);
+      if (saved && Object.prototype.hasOwnProperty.call(baseTiles, saved)) return saved;
+    } catch (error) {}
+    return 'OSM';
+  }
 
   const THERMAL_RISK_COLORS = {
     critical: '#dc2626',
@@ -198,6 +207,20 @@
     industrial_process_heat: '#f97316',
     unknown: '#6b7280',
   };
+
+  // Last-24-hours event markers use confidence only. Event lifecycle status
+  // (NEW/ACTIVE/INACTIVE) is shown as text in the popup and must not silently
+  // compete with the confidence percentage for the same colour encoding.
+  function modelConfidenceStyle(value) {
+    if (value == null || !Number.isFinite(Number(value))) {
+      return { color: '#94a3b8', label: 'Not evaluated' };
+    }
+    const confidence = Math.max(0, Math.min(1, Number(value)));
+    if (confidence >= 0.8) return { color: '#dc2626', label: 'Very high (80–100%)' };
+    if (confidence >= 0.6) return { color: '#f97316', label: 'High (60–79%)' };
+    if (confidence >= 0.4) return { color: '#eab308', label: 'Moderate (40–59%)' };
+    return { color: '#64748b', label: 'Low (0–39%)' };
+  }
 
   function thermalClass(value) {
     return { industrial: 'industrial_process_heat', natural: 'wildfire' }[value] ||
@@ -389,7 +412,8 @@
         'Satellite': L.tileLayer(TILES.satellite.url, { attribution: TILES.satellite.attr, maxZoom: 18 }),
         'Topo':      L.tileLayer(TILES.topo.url,      { attribution: TILES.topo.attr,      maxZoom: 17 }),
       };
-      this._baseTile = this._baseTiles['OSM'];
+      this._baseTileName = storedBasemapName(this._baseTiles);
+      this._baseTile = this._baseTiles[this._baseTileName];
       this._baseTile.addTo(this.map);
       this.map.setView([22.5, 80.5], 6);
 
@@ -429,11 +453,13 @@
       }).addTo(this.map);
       this._basemapControl.getContainer().classList.add('basemap-control');
 
-      this._darkBase     = false;  // OSM is the default light basemap
+      this._darkBase     = !_LIGHT_BASES.has(this._baseTileName);
       this._roadsGeoJSON = null;   // cached for re-render on basemap change
 
       this.map.on('baselayerchange', (e) => {
+        this._baseTileName = e.name;
         this._darkBase = !_LIGHT_BASES.has(e.name);
+        try { window.localStorage.setItem(BASEMAP_STORAGE_KEY, e.name); } catch (error) {}
         if (this._roadsGeoJSON) this.renderRoads(this._roadsGeoJSON);
       });
 
@@ -677,6 +703,67 @@
           if (map.hasLayer(layer)) map.fitBounds(bounds, { padding: [42, 42], maxZoom: 10 });
         }, 250);
       }
+    }
+
+    renderRecentFireEvents(geojson) {
+      this._layers.hotspots.clearLayers();
+      const features = geojson && Array.isArray(geojson.features) ? geojson.features : [];
+      const existingNotice = document.getElementById('thermal-map-notice');
+      if (existingNotice) existingNotice.remove();
+      if (!features.length) {
+        const mapWrap = document.getElementById('event-map-wrap');
+        if (mapWrap) {
+          const notice = document.createElement('div');
+          notice.id = 'thermal-map-notice';
+          notice.className = 'thermal-map-notice';
+          notice.innerHTML = '<b>No persisted events in this window</b><span>' +
+            'Recent cached FIRMS observations are being imported. This view refreshes automatically.' +
+            '</span>';
+          mapWrap.appendChild(notice);
+        }
+        return;
+      }
+      const renderer = this._hotspotCanvas;
+      const layer = L.geoJSON({ type: 'FeatureCollection', features: features }, {
+        pointToLayer(feature, latlng) {
+          const p = feature.properties || {};
+          const confidenceStyle = modelConfidenceStyle(p.model_confidence);
+          const count = Number(p.detection_count || 1);
+          return L.circleMarker(latlng, {
+            radius: Math.max(7, Math.min(17, 6 + Math.sqrt(count) * 2)),
+            color: confidenceStyle.color,
+            fillColor: confidenceStyle.color,
+            fillOpacity: .84,
+            opacity: .98,
+            weight: 2, renderer: renderer,
+          });
+        },
+        onEachFeature(feature, marker) {
+          const p = feature.properties || {};
+          const confidenceStyle = modelConfidenceStyle(p.model_confidence);
+          const confidence = p.model_confidence == null
+            ? 'Not evaluated'
+            : Math.round(Number(p.model_confidence) * 100) + '%';
+          marker.bindPopup(
+            '<div class="thermal-risk-popup">' +
+              '<div class="thermal-popup-kicker">LAST 24 HOURS · ' + safeHtml(p.status || 'UNKNOWN') + '</div>' +
+              '<b>' + safeHtml(String(p.predicted_class || 'not evaluated').replaceAll('_', ' ')) + '</b>' +
+              '<div class="thermal-popup-grid">' +
+                '<span>Model confidence</span><b>' + safeHtml(confidence) + '</b>' +
+                '<span>Marker color</span><b>' + safeHtml(confidenceStyle.label) + '</b>' +
+                '<span>Detections</span><b>' + safeHtml(p.detection_count || 0) + '</b>' +
+                '<span>Peak FRP</span><b>' + metric(p.max_frp, 1, ' MW') + '</b>' +
+                '<span>First detected (UTC)</span><b>' + safeHtml(p.first_detected_at || 'Unknown') + '</b>' +
+                '<span>Last detected (UTC)</span><b>' + safeHtml(p.last_detected_at || 'Unknown') + '</b>' +
+                '<span>Alert</span><b>' + safeHtml(p.alert_status || 'Not evaluated') + '</b>' +
+              '</div>' +
+            '</div>',
+            { maxWidth: 340 },
+          );
+        },
+      }).addTo(this._layers.hotspots);
+      const bounds = layer.getBounds();
+      if (bounds.isValid()) this.map.fitBounds(bounds, { padding: [42, 42], maxZoom: 10 });
     }
 
     renderClassifiedSources(geojson, observations) {

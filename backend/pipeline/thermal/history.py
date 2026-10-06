@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -34,6 +35,21 @@ _IDENTITY_COLUMNS = (
     "satellite",
     "instrument",
 )
+
+
+def _get_with_retry(session, url: str, *, timeout: int = 60, attempts: int = 3):
+    """Bounded exponential backoff for temporary FIRMS transport/server errors."""
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            response = session.get(url, timeout=timeout)
+            response.raise_for_status()
+            return response
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt + 1 < attempts:
+                time.sleep(2 ** attempt)
+    raise last_error
 
 
 @dataclass(frozen=True)
@@ -108,7 +124,7 @@ def collect_latest_firms(
     if day_range < 1 or day_range > 5:
         raise ValueError("NASA FIRMS live day range must be between 1 and 5 days")
 
-    api_key = os.getenv("FIRMS_API_KEY", "").strip()
+    api_key = (os.getenv("FIRMS_API_KEY") or os.getenv("NASA_FIRMS_MAP_KEY") or "").strip()
     if not api_key:
         raise RuntimeError("FIRMS_API_KEY is not configured")
 
@@ -123,8 +139,7 @@ def collect_latest_firms(
     for source in sources:
         url = f"{FIRMS_AREA_CSV_URL}/{api_key}/{source}/{area}/{day_range}"
         try:
-            response = session.get(url, timeout=60)
-            response.raise_for_status()
+            response = _get_with_retry(session, url)
         except requests.RequestException as exc:
             log.warning("[thermal-live] event %d source %s failed: %s", event.id, source, exc)
             errors.append({"source": source, "error": str(exc)})
@@ -184,7 +199,7 @@ def collect_firms_history(event, study, *, session=requests) -> list[Path]:
     if config.analysis_mode != THERMAL_MONITORING_MODE or history_dates is None:
         return []
 
-    api_key = os.getenv("FIRMS_API_KEY", "").strip()
+    api_key = (os.getenv("FIRMS_API_KEY") or os.getenv("NASA_FIRMS_MAP_KEY") or "").strip()
     if not api_key:
         log.info("[thermal-history] event %d collection skipped: FIRMS_API_KEY missing", event.id)
         return []
@@ -212,8 +227,7 @@ def collect_firms_history(event, study, *, session=requests) -> list[Path]:
                 f"{chunk_start.isoformat()}"
             )
             try:
-                response = session.get(url, timeout=60)
-                response.raise_for_status()
+                response = _get_with_retry(session, url)
             except requests.RequestException as exc:
                 # Sensors have independent availability windows. Preserve and
                 # normalize successful products even when one source is
@@ -279,6 +293,11 @@ def normalize_firms_frames(frames: Iterable[pd.DataFrame]) -> tuple[pd.DataFrame
 
     history = pd.concat(materialized, ignore_index=True, sort=False)
     history.columns = [str(column).strip().lower() for column in history.columns]
+    # Historical/SP files commonly encode version numerically, while NRT files
+    # use values such as ``2.0NRT``. Keep provenance as text so mixed history
+    # remains Parquet-safe when the first NRT rows arrive.
+    if "version" in history.columns:
+        history["version"] = history["version"].astype("string")
     missing = [column for column in _IDENTITY_COLUMNS if column not in history.columns]
     if missing:
         raise ValueError(f"FIRMS data missing identity columns: {', '.join(missing)}")

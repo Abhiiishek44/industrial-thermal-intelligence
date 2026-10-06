@@ -34,7 +34,7 @@ from api.timesteps import (
 
 _DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 _REPORT_SCHEMA_VERSION = 2
-_PROMPT_VERSION = "2026-08-31.mode-aware-v1"
+_PROMPT_VERSION = "2026-10-06.observation-scope-v2"
 log = logging.getLogger(__name__)
 
 
@@ -377,6 +377,30 @@ def _report_evidence(event, ts) -> tuple[dict, dict, list[dict], list[dict], boo
         "monitoring_focus": config.monitoring_focus,
         "bbox": list(config.view_bbox or config.bbox),
     }
+    # Classification and persistence products describe historical source
+    # clusters across the region. They are useful context, but they must not be
+    # presented as classifications of the detections in this one observation.
+    regional_source_context = None
+    if config.analysis_mode == "thermal_monitoring":
+        thermal = dict(fire_context.get("thermal") or {})
+        regional_source_context = {
+            "scope": "regional_historical_sources",
+            "source_class_counts": thermal.pop("classification_counts", {}),
+            "classification_mean_confidence": thermal.pop(
+                "classification_mean_confidence", None
+            ),
+            "emergency_candidate_count": thermal.pop(
+                "emergency_candidate_count", 0
+            ),
+            "persistence_level_counts": thermal.pop(
+                "persistence_level_counts", {}
+            ),
+            "persistent_source_count": thermal.pop(
+                "persistent_source_count", 0
+            ),
+        }
+        fire_context = {**fire_context, "thermal": thermal}
+
     enriched = {
         **fire_context,
         "analysis_mode": config.analysis_mode,
@@ -404,6 +428,12 @@ def _report_evidence(event, ts) -> tuple[dict, dict, list[dict], list[dict], boo
             "industrial_context": config.industrial_context_provider,
         },
     }
+    if regional_source_context is not None:
+        enriched["regional_source_context"] = regional_source_context
+        enriched["data_warnings"].append(
+            "Source classification and persistence totals are regional historical "
+            "context; they are not classifications of this observation's detections."
+        )
     return enriched, population, road_summary, landmarks, roads_available
 
 

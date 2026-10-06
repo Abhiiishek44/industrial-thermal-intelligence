@@ -9,8 +9,10 @@ from __future__ import annotations
 import math
 import os
 import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import numpy as np
 import pandas as pd
@@ -79,6 +81,36 @@ def _normalise_region(value: Any) -> str:
     key = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
     # The existing dashboard uses the shorter catalog id for this region.
     return {"vijayanagar": "vijayanagar_toranagallu"}.get(key, key)
+
+
+def _risk_event_today() -> pd.Timestamp:
+    """Return today's midnight for presentation of replayed risk events."""
+    timezone_name = os.getenv("RISK_EVENT_TIMEZONE", "Asia/Kolkata")
+    try:
+        application_timezone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        application_timezone = ZoneInfo("UTC")
+    return pd.Timestamp(datetime.now(application_timezone).date(), tz="UTC")
+
+
+def _present_risk_event_dates(
+    frame: pd.DataFrame, *, today: pd.Timestamp | None = None
+) -> pd.DataFrame:
+    """Rebase risk-event occurrence dates to today without changing clock times.
+
+    Prepared risk events are replay data, but the operational dashboard presents
+    them as today's events. Source-history and model-training dates are excluded
+    deliberately because they describe provenance rather than event occurrence.
+    """
+    presented = frame.copy()
+    target_day = (today if today is not None else _risk_event_today()).floor("D")
+    for column in ("event_date", "event_start", "event_end", "latest_observation_at"):
+        if column not in presented.columns:
+            continue
+        timestamps = pd.to_datetime(presented[column], utc=True, errors="coerce")
+        time_of_day = timestamps - timestamps.dt.floor("D")
+        presented[column] = target_day + time_of_day
+    return presented
 
 
 class ThermalIntelligenceService:
@@ -191,6 +223,7 @@ class ThermalIntelligenceService:
         selected = frame[list(fields)] if fields is not None else frame.drop(
             columns=["_region_key", "_event_year"], errors="ignore"
         )
+        selected = _present_risk_event_dates(selected)
         return [json_safe(record) for record in selected.to_dict("records")]
 
     def stats(

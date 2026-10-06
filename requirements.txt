@@ -8,7 +8,8 @@ python-dotenv==1.2.2
 rasterio
 numpy
 pandas
-scikit-learn
+# Must match the version used to serialize the production Isolation Forest.
+scikit-learn==1.9.1
 xgboost
 geopandas
 pydantic

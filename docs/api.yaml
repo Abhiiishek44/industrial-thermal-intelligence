@@ -466,6 +466,64 @@ components:
 
 paths:
 
+  /api/fires/recent:
+    get:
+      security: []
+      summary: List raw FIRMS detections in a rolling acquisition-time window
+      parameters:
+        - name: hours
+          in: query
+          schema: { type: integer, enum: [1, 6, 12, 24, 48], default: 24 }
+        - name: region_event_id
+          in: query
+          description: Optional configured monitoring-region event ID
+          schema: { type: integer, minimum: 1 }
+      responses:
+        200: { description: Recent detections with separate FIRMS and model confidence }
+        400: { description: Unsupported rolling-window value }
+
+  /api/fires/events:
+    get:
+      security: []
+      summary: List grouped fire events in a rolling acquisition-time window
+      parameters:
+        - name: hours
+          in: query
+          schema: { type: integer, enum: [1, 6, 12, 24, 48], default: 24 }
+        - name: region_event_id
+          in: query
+          description: Optional configured monitoring-region event ID
+          schema: { type: integer, minimum: 1 }
+      responses:
+        200: { description: Event-level GeoJSON FeatureCollection }
+
+  /api/fires/events/{event_id}:
+    get:
+      security: []
+      summary: Get one event with its raw detections and alerts
+      parameters:
+        - { name: event_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        200: { description: Event detail }
+        404: { description: Event not found }
+
+  /api/fires/detections/{detection_id}:
+    get:
+      security: []
+      summary: Get one raw FIRMS detection
+      parameters:
+        - { name: detection_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        200: { description: Detection detail }
+        404: { description: Detection not found }
+
+  /api/fires/status:
+    get:
+      security: []
+      summary: FIRMS ingestion health, source, interval, and model version
+      responses:
+        200: { description: Near-real-time ingestion status }
+
   /api/v1/thermal/stats:
     get:
       security: []

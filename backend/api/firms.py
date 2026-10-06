@@ -33,10 +33,11 @@ log = logging.getLogger(__name__)
 
 _FIRMS_BASE       = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
 _FIRMS_STATUS_URL = "https://firms.modaps.eosdis.nasa.gov/mapserver/mapkey_status/?MAP_KEY={key}"
-_SOURCES     = [
-    "VIIRS_NOAA20_NRT",  # NOAA-20
-    "VIIRS_NOAA21_NRT",  # NOAA-21
-]
+_SOURCES = tuple(
+    source.strip() for source in os.getenv(
+        "FIRMS_SOURCES", "VIIRS_NOAA20_NRT,VIIRS_NOAA21_NRT"
+    ).split(",") if source.strip()
+)
 # Tight envelope around the configured India catalog, not a costly global
 # request. Event-detail views still use each region's exact bounding box.
 _INDIA_BBOX   = "69.65,15.10,93.50,24.40"  # minLon,minLat,maxLon,maxLat
@@ -119,7 +120,7 @@ def _check_key_status(api_key: str) -> bool:
 
 
 def _fetch_firms(day_range: int) -> dict:
-    api_key = os.environ.get("FIRMS_API_KEY", "")
+    api_key = os.environ.get("FIRMS_API_KEY") or os.environ.get("NASA_FIRMS_MAP_KEY", "")
     if not api_key:
         log.error("[firms] FIRMS_API_KEY not set")
         return _empty_fc()

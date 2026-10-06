@@ -13,7 +13,15 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
 </head>
-<body class="dark">
+<body class="light">
+<script>
+  // Apply the saved theme before the dashboard is painted to avoid a flash of
+  // the default theme while the main application bundle initializes.
+  try {
+    var savedTheme = window.localStorage.getItem('wildfire:theme');
+    document.body.className = savedTheme === 'dark' ? 'dark' : 'light';
+  } catch (error) {}
+</script>
 
 <!-- ══════════════════════════════════════════════════════════
      HEADER
@@ -84,6 +92,10 @@
       <div class="lp-section-title hidden" id="thermal-view-title">Thermal View</div>
       <div class="pred-type-wrap hidden" id="thermal-view-section">
         <label class="pred-type-opt">
+          <input type="radio" name="thermal-view" value="24h" checked>
+          <span class="pred-type-info"><span class="pred-type-label">Last 24 Hours</span><span class="pred-type-hint">Live event markers grouped from new FIRMS pixels</span></span>
+        </label>
+        <label class="pred-type-opt">
           <input type="radio" name="thermal-view" value="5d">
           <span class="pred-type-info"><span class="pred-type-label">5-Day Activity</span><span class="pred-type-hint">Cumulative detections through the selected time</span></span>
         </label>
@@ -100,7 +112,7 @@
           <span class="pred-type-info"><span class="pred-type-label">Persistent Sources</span><span class="pred-type-hint">Recurring spatial clusters over 30 days</span></span>
         </label>
         <label class="pred-type-opt">
-          <input type="radio" name="thermal-view" value="risk" checked>
+          <input type="radio" name="thermal-view" value="risk">
           <span class="pred-type-info"><span class="pred-type-label">Risk Events</span><span class="pred-type-hint">Prioritized source-specific anomalies</span></span>
         </label>
         <label class="pred-type-opt">
@@ -517,11 +529,11 @@
 </div>
 
 <script src="js/api.js"></script>
-<script src="js/map.js"></script>
+<script src="js/map.js?v=20261006-confidence-colors-1"></script>
 <script src="js/dashboard.js"></script>
 <script src="js/chat.js"></script>
 <script src="js/crowd.js"></script>
-<script src="js/app.js"></script>
+<script src="js/app.js?v=20261006-theme-persistence-1"></script>
 
 </body>
 </html>
